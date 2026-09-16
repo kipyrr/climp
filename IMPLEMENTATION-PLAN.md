@@ -466,6 +466,8 @@ That is sooner than Phase 4 will exist. So retention is no longer a hardening ta
 
 *A reframe worth considering.* With ~16 clips of headroom, retention makes the Drive folder a rolling window of the most recent clips. For the stated purpose — clip something, grab it on a phone or laptop shortly after — that window is not a compromise. It is arguably the correct design, and Drive stops being an archive and becomes a transfer buffer. Whether Kip wants an archive too is a separate question, and a different budget.
 
+*Status 2026-09-16:* the 10.3 GB already sitting in Drive is Kip's to manage and is **out of scope for this app** — filed as misc, not tracked here. The app's own budget is whatever is free at the time, which it reads at startup rather than assuming.
+
 *Note on scope.* `drive.file` means this app cannot see, and therefore cannot report on, the 10.3 GB already in Drive — it only ever sees what it created itself. That is the scope working as intended. The breakdown lives at one.google.com/storage. The same property makes retention safe: the app can only ever delete clips it uploaded.
 
 **3 · OAuth "Testing" mode expires the refresh token every 7 days.** *Cause:* a Cloud OAuth app left with audience = Testing. *Where:* auth, at the first upload after expiry. *Effect:* the app dies weekly for no visible reason.
