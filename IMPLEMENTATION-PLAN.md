@@ -442,7 +442,27 @@ The blueprint's twelve, each with the concrete code response, plus three impleme
 1. `403 storageQuotaExceeded` lands in `last_error` verbatim and the tray shows it plainly — a full Drive must be visible, not a silent stream of failures.
 2. **The Phase 0 spike reports `about.get(fields="storageQuota")`** so real headroom is known before the first byte is uploaded.
 
-*Schedule change:* retention was Phase 4 on the assumption that the ceiling was distant. On the free tier with 225 MB clips it is not distant, so **the tray must show remaining quota from Phase 3**, and retention should be the first thing built in Phase 4 rather than the last. This does not move any component; it reorders work.
+*Measured against the live account, 2026-09-16, by the Phase 0 spike:*
+
+| | |
+|---|---|
+| Limit | 15.0 GB |
+| Used (Drive + Gmail + Photos) | 11.3 GB |
+| — of which Drive | 10.3 GB |
+| **Free** | **3.7 GB** |
+| **Headroom at 225 MB/clip** | **about 16 clips** |
+
+*Schedule change — this is now the binding constraint on the whole project.* Kip records roughly 24 clips a month (48 since 2026-07-16), or about 5.4 GB a month. Against 3.7 GB free, **the app fills the account in roughly three weeks of normal play**, at which point Gmail stops accepting mail.
+
+That is sooner than Phase 4 will exist. So retention is no longer a hardening task:
+
+- **The tray shows remaining quota from Phase 3.** Non-negotiable — running this unattended without a visible quota figure is how Gmail breaks silently.
+- **Retention moves into Phase 3**, alongside the tray, rather than opening Phase 4.
+- Until retention exists, the app should not be left running unattended for more than a week or so.
+
+*A reframe worth considering.* With ~16 clips of headroom, retention makes the Drive folder a rolling window of the most recent clips. For the stated purpose — clip something, grab it on a phone or laptop shortly after — that window is not a compromise. It is arguably the correct design, and Drive stops being an archive and becomes a transfer buffer. Whether Kip wants an archive too is a separate question, and a different budget.
+
+*Note on scope.* `drive.file` means this app cannot see, and therefore cannot report on, the 10.3 GB already in Drive — it only ever sees what it created itself. That is the scope working as intended. The breakdown lives at one.google.com/storage. The same property makes retention safe: the app can only ever delete clips it uploaded.
 
 **3 · OAuth "Testing" mode expires the refresh token every 7 days.** *Cause:* a Cloud OAuth app left with audience = Testing. *Where:* auth, at the first upload after expiry. *Effect:* the app dies weekly for no visible reason.
 
@@ -499,8 +519,8 @@ The blueprint's six phases, with the modules mapped on and a gate each. Each pha
 | **0 · Spike** | throwaway script, Cloud console setup | — | A clip you picked by hand is visible in Drive |
 | **1 · Walking skeleton** | `watcher.py`, `settle.py`, first `uploader.py`, `test_settle.py` | Phase 0's working auth | You clip in-game and it lands in Drive untouched |
 | **2 · Durability** | `db.py`, `reconciler.py`, rewritten `uploader.py`, `drive.py` | the state table designed first | Kill the app mid-upload, restart, it finishes |
-| **3 · Livable** | `tray.py`, `config.py`, `main.py`, logging, packaging | Phase 2's queue | It has run a week and you forgot it exists |
-| **4 · Hardening** | defer-or-cap, retention, power events | a queue the worker can hold back | Survives a month of sleep cycles, does not fill Drive |
+| **3 · Livable** | `tray.py`, `config.py`, `main.py`, logging, packaging, **quota display + retention** | Phase 2's queue | It has run a week and you forgot it exists — **and Drive has not filled** |
+| **4 · Hardening** | defer-or-cap, power events | a queue the worker can hold back | Survives a month of sleep cycles |
 | **5 · Polish** | tests, README, CI | everything above | A stranger can read the repo and follow the decisions |
 
 ### Phase 0 — spike
@@ -518,6 +538,19 @@ Start here. The OAuth setup is the least enjoyable part and everything downstrea
 7. While you are here: `python -c "import sqlite3; print(sqlite3.sqlite_version)"` and record whether `RETURNING` is available (§2.3.2).
 
 **Do not write watcher code until a file you chose by hand is sitting in Drive.**
+
+### ✅ Phase 0 closed — 2026-09-16
+
+Gate met. `spike.py` authenticated, reported quota, created the folder and uploaded a clip. Verified facts now available to later phases:
+
+| Fact | Value | Why it matters |
+|---|---|---|
+| Resumable session URI is returned by the client library | confirmed, via `request.resumable_uri` after the first chunk | **The single riskiest assumption in the plan.** All of Phase 2's crash recovery rests on persisting this. §2.7's preferred approach is viable; the explicit `Content-Range` fallback is not needed |
+| Drive folder ID | `1B3-qC7-aXJvh-H7jOrY-UsbP3yCrgnWa` | Goes into `config.toml` in Phase 3 |
+| SQLite | 3.50.4 | ≥ 3.35, so the `RETURNING` form of the atomic claim (§2.3.2) is available — write that one, not the fallback |
+| Python | 3.13.15, venv at `.venv/` | — |
+| Token storage | `%LOCALAPPDATA%\ClipSync\token.json`, plaintext | Phase 3 replaces this with DPAPI (roadblock 11) |
+| Free quota | 3.7 GB / ~16 clips | See roadblock 2 — this reordered Phases 3 and 4 |
 
 ### Phase 1 — walking skeleton
 
