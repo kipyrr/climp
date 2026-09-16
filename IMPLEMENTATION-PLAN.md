@@ -456,13 +456,21 @@ The blueprint's twelve, each with the concrete code response, plus three impleme
 | **Free** | **3.7 GB** |
 | **Headroom at 225 MB/clip** | **about 16 clips** |
 
-*Schedule change — this is now the binding constraint on the whole project.* Kip records roughly 24 clips a month (48 since 2026-07-16), or about 5.4 GB a month. Against 3.7 GB free, **the app fills the account in roughly three weeks of normal play**, at which point Gmail stops accepting mail.
+*Re-measured 2026-09-16, 16:24, after Kip freed space:*
 
-That is sooner than Phase 4 will exist. So retention is no longer a hardening task:
+| | Earlier | Now |
+|---|---|---|
+| Used | 11.3 GB | **1.02 GB** |
+| Free | 3.7 GB | **13.98 GB** |
+| Headroom at 225 MB/clip | ~16 clips | **~62 clips** |
 
-- **The tray shows remaining quota from Phase 3.** Non-negotiable — running this unattended without a visible quota figure is how Gmail breaks silently.
-- **Retention moves into Phase 3**, alongside the tray, rather than opening Phase 4.
-- Until retention exists, the app should not be left running unattended for more than a week or so.
+At roughly 24 clips a month that is about **two and a half months**, not three weeks.
+
+*Schedule, settled.* The earlier reading briefly made this the binding constraint on the project and moved retention into Phase 3. That no longer holds, and the change is reverted:
+
+- **Retention returns to Phase 4**, where the blueprint put it. Phase 4 will plausibly arrive before the ceiling does.
+- **The quota display stays in Phase 3.** It is a few lines, it is the early warning that makes the Phase 4 timing a choice rather than a surprise, and `main.py` already reads the figure at startup.
+- The app reads real free space at startup rather than assuming any, so this stays true if the number moves again.
 
 *A reframe worth considering.* With ~16 clips of headroom, retention makes the Drive folder a rolling window of the most recent clips. For the stated purpose — clip something, grab it on a phone or laptop shortly after — that window is not a compromise. It is arguably the correct design, and Drive stops being an archive and becomes a transfer buffer. Whether Kip wants an archive too is a separate question, and a different budget.
 
@@ -525,8 +533,8 @@ The blueprint's six phases, with the modules mapped on and a gate each. Each pha
 | **0 · Spike** | throwaway script, Cloud console setup | — | A clip you picked by hand is visible in Drive |
 | **1 · Walking skeleton** | `watcher.py`, `settle.py`, first `uploader.py`, `test_settle.py` | Phase 0's working auth | You clip in-game and it lands in Drive untouched |
 | **2 · Durability** | `db.py`, `reconciler.py`, rewritten `uploader.py`, `drive.py` | the state table designed first | Kill the app mid-upload, restart, it finishes |
-| **3 · Livable** | `tray.py`, `config.py`, `main.py`, logging, packaging, **quota display + retention** | Phase 2's queue | It has run a week and you forgot it exists — **and Drive has not filled** |
-| **4 · Hardening** | defer-or-cap, power events | a queue the worker can hold back | Survives a month of sleep cycles |
+| **3 · Livable** | `tray.py`, `config.py`, `main.py`, logging, packaging, **quota display** | Phase 2's queue | It has run a week and you forgot it exists |
+| **4 · Hardening** | defer-or-cap, **retention**, power events | a queue the worker can hold back | Survives a month of sleep cycles, does not fill Drive |
 | **5 · Polish** | tests, README, CI | everything above | A stranger can read the repo and follow the decisions |
 
 ### Phase 0 — spike
@@ -736,6 +744,7 @@ The blueprint lists twelve open decisions. The four that change the schema or a 
 | **D9** | Implement `content_hash` | → **skip it**, gap documented. ShadowPlay timestamps its filenames, so a same-path collision is close to impossible, and hashing 400 MB per clip is real disk I/O. The column stays in the schema unused, so enabling it later is not a migration. | **Settled** |
 | **D10** | Upload concurrency | → 1. The blueprint's diagram says 1–2; 1 is gentler on your connection while gaming (roadblock 4). It is a config value, so raising it is a one-line change — and `test_db.py` still tests the two-worker claim race. | Default |
 | **D11** | Verifying `done` against Drive | → **no startup verification.** The upload response already proves the file landed; checking every `done` row per launch is one API call per clip forever and gets slower as the library grows. Instead, a tray menu item "Verify Drive contents" runs the check on demand. | **Settled** |
+| **D16** | How a path is made unique on Windows | → a second column, **`path_key`**, holding `normcase(abspath(path))` with the UNIQUE index on it, while `path` keeps the original spelling for display. Storing only the normalised form would put lowercased filenames in the tray; a `lower(path)` expression index would miss non-ASCII game names, since SQLite's `lower()` is ASCII-only. `normalise()` lives in `db.py` and is called nowhere else. | **Settled** |
 | **D15** | Where the `backfill_since` gate is enforced, and what happens to a file that fails it | → **in the settle checker**, which already stats every candidate, and the row is **deleted** rather than moved to a terminal state. Forced by a measured watcher run (17 old clips fired `modified` events during an Explorer browse), which disproved D14's assumption that the watcher only ever sees new files. Deleting rather than adding a `skipped` state keeps the state machine as the blueprint defines it and is self-healing: a re-inserted row is simply dropped again, costing one insert and one delete. Leaving them at `candidate` instead would produce a settle timeout and fill the tray with false `failed` rows. | **Settled** |
 | **D14** | Drive tier, and what the reconciler does with the 48 existing clips | → **Free 15 GB**, and **`backfill_since` set to first-run time**, so the 10.57 GB back catalogue is never queued. Implemented as an mtime gate on the reconciler's insert — no new state, no rows written for skipped files, reversible by lowering the value. The watcher is not gated. Consequences: the tray shows remaining quota from Phase 3, and retention leads Phase 4 instead of trailing it (roadblock 2). | **Settled** |
 | **D13** | OAuth audience: Testing or In production | → **Testing**, accepted deliberately. Publishing requires App-domain homepage and privacy-policy URLs Kip does not have; the blueprint assumed publishing would be free. Cost is a re-auth roughly weekly, handled in `drive.py` + the tray (roadblock 3). Reversible in seconds later, with no migration — same client ID, scope, folder and database; only the stored token is discarded. **Revisit when the repo has a public URL.** | **Settled** |

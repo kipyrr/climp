@@ -191,6 +191,76 @@ def try_exclusive_open(path: Path) -> bool:
         win32file.CloseHandle(handle)
 
 
+class DbSettleChecker:
+    """Phase 2 settle checker. Same `evaluate`, rows instead of a dict.
+
+    Every decision below is the identical pure function the Phase 1 loop and
+    the unit tests use. Only where the state lives has changed, which is the
+    whole reason `evaluate` takes its inputs as arguments.
+
+    Note the clock is wall time, not monotonic: `first_seen_at` is persisted,
+    so the timeout has to survive a restart, and a monotonic value would not.
+    """
+
+    def __init__(
+        self,
+        db,
+        backfill_since: float | None = None,
+        timeout_seconds: float = SETTLE_TIMEOUT_SECONDS,
+        clock=time.time,
+        stat_fn=probe_file,
+        exclusive_fn=try_exclusive_open,
+    ) -> None:
+        self._db = db
+        self._backfill_since = backfill_since
+        self._timeout = timeout_seconds
+        self._clock = clock
+        self._stat = stat_fn
+        self._exclusive = exclusive_fn
+
+    def poll_once(self) -> dict[str, int]:
+        tally: dict[str, int] = {}
+        for row in self._db.candidates():
+            candidate = Candidate(
+                path=row.path,
+                size_bytes=row.size_bytes,
+                mtime=row.mtime,
+                stable_count=row.stable_count,
+                first_seen_at=row.first_seen_at,
+            )
+            probe = self._stat(row.path)
+            exclusive = self._exclusive(row.path) if needs_exclusive_check(candidate, probe) else False
+
+            decision = evaluate(
+                candidate,
+                probe,
+                self._clock(),
+                exclusive_open=exclusive,
+                timeout_seconds=self._timeout,
+                backfill_since=self._backfill_since,
+            )
+            self._apply(row.id, decision)
+            tally[decision.outcome.value] = tally.get(decision.outcome.value, 0) + 1
+        return tally
+
+    def _apply(self, clip_id: int, decision: Decision) -> None:
+        c = decision.candidate
+        outcome = decision.outcome
+
+        if outcome is Outcome.WAITING:
+            self._db.record_probe(clip_id, c.size_bytes or 0, c.mtime or 0.0, c.stable_count)
+        elif outcome is Outcome.READY:
+            self._db.record_probe(clip_id, c.size_bytes or 0, c.mtime or 0.0, c.stable_count)
+            self._db.mark_ready(clip_id)
+            log.info("ready: %s (%s)", c.path.name, decision.reason)
+        elif outcome in (Outcome.FAILED_TIMEOUT, Outcome.FAILED_VANISHED):
+            self._db.mark_settle_timeout(clip_id, decision.reason)
+            log.info("%s: %s (%s)", outcome.value, c.path.name, decision.reason)
+        else:  # DROPPED_PHANTOM, DROPPED_TOO_OLD -- D15
+            self._db.drop(clip_id)
+            log.debug("%s: %s (%s)", outcome.value, c.path.name, decision.reason)
+
+
 class SettleLoop:
     """Phase 1: holds candidates in a dict. Phase 2: db.py holds them instead.
 
