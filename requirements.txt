@@ -1,0 +1,5 @@
+# Phase 0 — spike only.
+# watchdog, pystray and pywin32 arrive in Phase 1/3; they are not needed to prove auth works.
+google-api-python-client
+google-auth-oauthlib
+google-auth-httplib2

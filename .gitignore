@@ -1,0 +1,22 @@
+# Secrets — never commit. See IMPLEMENTATION-PLAN.md D12.
+# These live in %LOCALAPPDATA%\ClipSync\ precisely so this file is belt-and-braces.
+client_secret*.json
+token*.json
+*.token
+*.bin
+
+# Local state
+*.db
+*.db-wal
+*.db-shm
+config.toml
+*.log
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+build/
+dist/
+*.egg-info/
