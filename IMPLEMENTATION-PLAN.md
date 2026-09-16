@@ -214,6 +214,8 @@ COMMIT;
 
 **Implementation notes:**
 - The debounce is an in-memory `dict[path, last_seen_monotonic]` with a ~1s window. It is a *performance* measure, not a correctness one — correctness comes from `ON CONFLICT(path) DO NOTHING`. Do not let anyone "simplify" by keeping only the debounce.
+
+  **Measured against the simulator, 2026-09-16:** one synthetic recording produced **6 raw watchdog events**, of which the debounce collapsed **1**, leaving 5 calls for 1 path. That is a weak showing for a performance measure — but the number is an artifact of the simulator's 1.5s write gap being wider than the 1s debounce window, which is a value chosen arbitrarily. **The real figure needs a real in-game clip** (Phase 1 step 1's actual instruction) and is still outstanding. Until then, do not tune the window; the unique index is carrying the correctness either way.
 - Handle `on_moved` as well as `on_created`/`on_modified`, and enqueue `event.dest_path`. Some capture tools write to a temp name and rename; if ShadowPlay ever does, create-only would miss the final name. Cheap insurance, no new state.
 - Filter on `.mp4` case-insensitively; ignore directories.
 
