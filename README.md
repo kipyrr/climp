@@ -124,9 +124,16 @@ A browser opens once. You will see *"Google hasn't verified this app"* —
 click **Advanced → Go to climp**. That is you authorising your own software.
 
 It creates a Drive folder called **Game Clips**, writes
-`%LOCALAPPDATA%\climp\config.toml`, and starts watching. Look for a red
-circle near your clock; Windows 11 hides new tray icons, so check the `^`
-overflow arrow.
+`%LOCALAPPDATA%\climp\config.toml`, and starts watching.
+
+**Finding the icon.** Windows 11 hides new tray icons by default, so climp will
+almost certainly *not* appear next to your clock on first run. Click the `^`
+arrow to the left of the clock to open the hidden-icons panel, find the red
+circle, and drag it down onto the taskbar to keep it visible. Until you do
+that, a successful start looks exactly like nothing happening.
+
+Only one copy runs at a time. Launching it again tells you it is already
+running rather than starting a second one.
 
 ### 4. Optional
 

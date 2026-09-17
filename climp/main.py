@@ -41,8 +41,58 @@ from climp.watcher import Watcher
 log = logging.getLogger("climp")
 
 QUOTA_REFRESH_SECONDS = 300
+# Local\ scopes it to this login session, so it cannot collide with
+# another Windows user running their own copy.
+SINGLE_INSTANCE_MUTEX = r"Local\climp-single-instance"
 # A gap this large between wall time and monotonic time means Windows slept.
 SLEEP_DETECT_SECONDS = 30.0
+
+
+def acquire_single_instance(name: str = SINGLE_INSTANCE_MUTEX):
+    """Return a handle if this is the only copy, or None if one already runs.
+
+    Without this, double-clicking the shortcut again silently starts a second
+    copy: two watchers on one folder, two upload workers on one database. The
+    claim is atomic so nothing corrupts, but it wastes bandwidth and is
+    baffling to diagnose. The returned handle must stay referenced for the life
+    of the process -- Windows releases the mutex when it is collected.
+    """
+    try:
+        import win32api
+        import win32event
+        import winerror
+    except ImportError:
+        return object()  # not Windows; nothing to guard against
+
+    handle = win32event.CreateMutex(None, False, name)
+    # GetLastError must be read immediately: CreateMutex still returns a valid
+    # handle when the mutex already exists, so the handle alone says nothing.
+    if win32api.GetLastError() == winerror.ERROR_ALREADY_EXISTS:
+        return None
+    return handle
+
+
+def already_running_notice() -> None:
+    """Say so visibly. Under pythonw there is no console to print to.
+
+    This is the point of the guard: a second double-click that does nothing at
+    all is indistinguishable from the app being broken.
+    """
+    try:
+        import ctypes
+
+        message = "\n".join(
+            [
+                "climp is already running.",
+                "",
+                "Look for the red circle near your clock. Windows hides new tray",
+                "icons, so click the ^ arrow to the left of the clock, then drag",
+                "the icon down onto the taskbar to keep it visible.",
+            ]
+        )
+        ctypes.windll.user32.MessageBoxW(None, message, "climp", 0x40)  # MB_ICONINFORMATION
+    except Exception:
+        log.warning("climp is already running")
 
 
 def human_gb(n: int | None) -> str:
@@ -414,6 +464,11 @@ def main() -> None:
     ap.add_argument("--no-tray", action="store_true", help="Run headless with a console status line.")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
+
+    lock = acquire_single_instance()
+    if lock is None:
+        already_running_notice()
+        return
 
     cfg = config_module.load()
     if args.clips_root:
