@@ -34,6 +34,18 @@ class Config:
     settle_timeout_seconds: float = 30 * 60   # D6
     stale_upload_seconds: float = 600         # roadblock 7
 
+    # Roadblock 4: hold uploads back while a fullscreen game has the screen, so
+    # a 225 MB transfer does not add latency to the thing being recorded.
+    defer_while_gaming: bool = True
+
+    # Roadblock 2. OFF by default: this deletes files from Drive, so it runs
+    # only because it was turned on. min_age_hours is a floor independent of
+    # the keep count, so a bad keep value cannot remove a fresh clip.
+    retention_enabled: bool = False
+    retention_keep_newest: int = 40
+    retention_min_age_hours: float = 24.0
+    retention_interval_hours: float = 6.0
+
     app_dir: Path = APP_DIR
 
     @property
@@ -72,6 +84,11 @@ def load(path: Path = CONFIG_PATH) -> Config:
         max_attempts=int(raw.get("max_attempts", 6)),
         settle_timeout_seconds=float(raw.get("settle_timeout_seconds", 30 * 60)),
         stale_upload_seconds=float(raw.get("stale_upload_seconds", 600)),
+        defer_while_gaming=bool(raw.get("defer_while_gaming", True)),
+        retention_enabled=bool(raw.get("retention_enabled", False)),
+        retention_keep_newest=int(raw.get("retention_keep_newest", 40)),
+        retention_min_age_hours=float(raw.get("retention_min_age_hours", 24.0)),
+        retention_interval_hours=float(raw.get("retention_interval_hours", 6.0)),
         app_dir=Path(raw.get("app_dir", APP_DIR)),
     )
 
@@ -106,6 +123,17 @@ concurrency = {cfg.concurrency}
 max_attempts = {cfg.max_attempts}
 settle_timeout_seconds = {cfg.settle_timeout_seconds!r}
 stale_upload_seconds = {cfg.stale_upload_seconds!r}
+
+# Hold uploads back while a fullscreen game is running (roadblock 4).
+defer_while_gaming = {str(cfg.defer_while_gaming).lower()}
+
+# Retention deletes the oldest uploads from Drive to stop it filling up.
+# It is off unless you turn it on. keep_newest is how many clips stay in Drive;
+# min_age_hours is a floor, so nothing recent is ever removed regardless.
+retention_enabled = {str(cfg.retention_enabled).lower()}
+retention_keep_newest = {cfg.retention_keep_newest}
+retention_min_age_hours = {cfg.retention_min_age_hours!r}
+retention_interval_hours = {cfg.retention_interval_hours!r}
 '''
     path.write_text(body, encoding="utf-8")
 

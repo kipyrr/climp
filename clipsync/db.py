@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS clips (
   session_uri     TEXT,
   drive_file_id   TEXT,
   drive_link      TEXT,
+  retired_at      REAL,                      -- removed from Drive by retention (D17)
   updated_at      REAL    NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ix_clips_state ON clips(state);
@@ -82,6 +83,7 @@ class Clip:
     session_uri: str | None
     drive_file_id: str | None
     drive_link: str | None
+    retired_at: float | None
     updated_at: float
 
     @classmethod
@@ -100,6 +102,7 @@ class Clip:
             session_uri=row["session_uri"],
             drive_file_id=row["drive_file_id"],
             drive_link=row["drive_link"],
+            retired_at=row["retired_at"] if "retired_at" in row.keys() else None,
             updated_at=row["updated_at"],
         )
 
@@ -130,6 +133,20 @@ class Db:
     def init_schema(self) -> None:
         with self._init_lock:
             self.conn.executescript(SCHEMA)
+            self._migrate()
+
+    def _migrate(self) -> None:
+        """Add columns introduced after a database was first created.
+
+        SQLite has no IF NOT EXISTS for ADD COLUMN, so the existing columns are
+        read first. Kept here rather than in a migration framework because the
+        whole schema is one table.
+        """
+        existing = {r["name"] for r in self.conn.execute("PRAGMA table_info(clips)")}
+        for column, ddl in (("retired_at", "REAL"),):
+            if column not in existing:
+                log.info("migrating: adding clips.%s", column)
+                self.conn.execute(f"ALTER TABLE clips ADD COLUMN {column} {ddl}")
 
     def close(self) -> None:
         conn = getattr(self._local, "conn", None)
@@ -290,6 +307,49 @@ class Db:
         if cur.rowcount:
             log.info("recovered %d stranded upload(s)", cur.rowcount)
         return cur.rowcount
+
+    # --- retention (D17) --------------------------------------------------
+
+    def retention_candidates(self, keep_newest: int, min_age_seconds: float, now: float) -> list[Clip]:
+        """Uploaded clips eligible for removal from Drive.
+
+        Ordered newest first by recording time, then everything past the keep
+        count is a candidate -- provided it is also older than the age floor.
+        The floor is a safety net: it means a misconfigured keep count can
+        never delete something uploaded minutes ago.
+
+        Only rows that are done, still have a Drive file id, and have not
+        already been retired are ever returned.
+        """
+        rows = self.conn.execute(
+            """SELECT * FROM clips
+                WHERE state = ?
+                  AND drive_file_id IS NOT NULL
+                  AND retired_at IS NULL
+                ORDER BY COALESCE(mtime, first_seen_at) DESC""",
+            (DONE,),
+        ).fetchall()
+
+        clips = [Clip.from_row(r) for r in rows]
+        older = clips[keep_newest:]
+        return [c for c in older if (now - (c.mtime or c.first_seen_at)) >= min_age_seconds]
+
+    def mark_retired(self, clip_id: int) -> None:
+        """Record that the Drive copy is gone.
+
+        The row stays at done deliberately. That is what stops the reconciler
+        re-uploading the clip on the next start, which would undo the retention
+        and refill the quota.
+        """
+        self.conn.execute(
+            "UPDATE clips SET retired_at=?, updated_at=? WHERE id=?",
+            (self._clock(), self._clock(), clip_id),
+        )
+
+    def retired_count(self) -> int:
+        return self.conn.execute(
+            "SELECT COUNT(*) n FROM clips WHERE retired_at IS NOT NULL"
+        ).fetchone()["n"]
 
     # --- tray -------------------------------------------------------------
 

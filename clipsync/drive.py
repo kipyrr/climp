@@ -203,6 +203,14 @@ class DriveClient:
         ).execute()
         return created["id"]
 
+    def delete_file(self, file_id: str) -> None:
+        """Permanently delete a file this app uploaded.
+
+        Under drive.file this cannot reach anything the app did not create, so
+        the blast radius is the Game Clips folder and nothing else.
+        """
+        self.service.files().delete(fileId=file_id).execute()
+
     # --- upload -----------------------------------------------------------
 
     def build_upload(self, path: Path, folder_id: str, session_uri: str | None = None) -> ResumableUpload:

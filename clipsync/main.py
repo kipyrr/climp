@@ -25,8 +25,10 @@ import threading
 import time
 from pathlib import Path
 
+from clipsync import activity
 from clipsync import config as config_module
 from clipsync import logging_setup
+from clipsync import retention
 from clipsync.db import Db
 from clipsync.drive import AuthExpired, DriveClient
 from clipsync.reconciler import reconcile
@@ -38,6 +40,8 @@ from clipsync.watcher import Watcher
 log = logging.getLogger("clipsync")
 
 QUOTA_REFRESH_SECONDS = 300
+# A gap this large between wall time and monotonic time means Windows slept.
+SLEEP_DETECT_SECONDS = 30.0
 
 
 def human_gb(n: int | None) -> str:
@@ -55,6 +59,7 @@ class Application:
         self.tray: Tray | None = None
         self.log_path: Path | None = None
         self._threads: list[threading.Thread] = []
+        self._workers: list[UploadWorker] = []
         self._quota_cache: dict | None = None
         self._quota_checked_at = 0.0
 
@@ -87,6 +92,14 @@ class Application:
         for i in range(self.cfg.concurrency):
             self._spawn(f"upload-{i}", self._upload_loop)
         self._spawn("sweeper", self._sweep_loop)
+        if self.cfg.retention_enabled:
+            log.info(
+                "retention on: keeping the newest %d clips, nothing younger than %.0fh",
+                self.cfg.retention_keep_newest, self.cfg.retention_min_age_hours,
+            )
+            self._spawn("retention", self._retention_loop)
+        else:
+            log.info("retention off (set retention_enabled in config.toml to turn it on)")
 
     def _authorise(self) -> None:
         try:
@@ -163,7 +176,9 @@ class Application:
             stop_event=self.stop,
             max_attempts=self.cfg.max_attempts,
             on_auth_needed=self._auth_needed,
+            should_defer=activity.is_busy if self.cfg.defer_while_gaming else None,
         )
+        self._workers.append(worker)
         try:
             worker.run()
         except Exception:
@@ -172,15 +187,48 @@ class Application:
             self.db.close()
 
     def _sweep_loop(self) -> None:
-        """Roadblock 7. A slept machine wakes to dead sockets, not errors."""
+        """Roadblock 7. A slept machine wakes to dead sockets, not errors.
+
+        Sleep is detected rather than waited out. time.monotonic() is frozen
+        while Windows is suspended but time.time() is not, so a gap between the
+        two means the machine was asleep. That turns a ten-minute staleness
+        timeout into an immediate requeue on wake, without subscribing to power
+        broadcasts or owning a message window.
+        """
+        interval = 60.0
         while not self.stop.is_set():
-            self.stop.wait(60)
+            before_mono, before_wall = time.monotonic(), time.time()
+            self.stop.wait(interval)
+            if self.stop.is_set():
+                break
+
+            slept = (time.time() - before_wall) - (time.monotonic() - before_mono)
+            try:
+                if slept > SLEEP_DETECT_SECONDS:
+                    log.info("system resumed after about %.0fs suspended; requeueing uploads", slept)
+                    self.db.recover_stranded_uploads()
+                else:
+                    self.db.recover_stranded_uploads(stale_after_seconds=self.cfg.stale_upload_seconds)
+            except Exception:
+                log.exception("stale sweep failed")
+        self.db.close()
+
+    def _retention_loop(self) -> None:
+        """Roadblock 2. Only runs if it was turned on."""
+        interval = self.cfg.retention_interval_hours * 3600
+        while not self.stop.is_set():
+            self.stop.wait(interval)
             if self.stop.is_set():
                 break
             try:
-                self.db.recover_stranded_uploads(stale_after_seconds=self.cfg.stale_upload_seconds)
+                retention.sweep(
+                    self.db,
+                    self.client,
+                    keep_newest=self.cfg.retention_keep_newest,
+                    min_age_hours=self.cfg.retention_min_age_hours,
+                )
             except Exception:
-                log.exception("stale sweep failed")
+                log.exception("retention sweep failed")
         self.db.close()
 
     def _auth_needed(self, detail: str) -> None:
@@ -204,8 +252,17 @@ class Application:
             t.join(timeout=5)
         self.db.close()
 
+    @property
+    def deferring(self) -> bool:
+        return any(w.deferring for w in self._workers)
+
     def status_line(self) -> str:
         c = self.db.counts_by_state()
+        if self.deferring:
+            return (
+                f"PAUSED (fullscreen app)  candidate {c['candidate']}  ready {c['ready']}  "
+                f"done {c['done']}  failed {c['failed']}"
+            )
         return (
             f"candidate {c['candidate']}  ready {c['ready']}  uploading {c['uploading']}  "
             f"done {c['done']}  failed {c['failed']}"
@@ -244,6 +301,7 @@ def main() -> None:
         log_path=log_path,
         drive_folder_id=app.folder_id,
         quota_provider=app.quota,
+        deferring_provider=lambda: app.deferring,
     )
     log.info("running in the tray. Use its Quit item to stop.")
     try:

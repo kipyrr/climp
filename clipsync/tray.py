@@ -55,12 +55,15 @@ class Tray:
         log_path: Path | None = None,
         drive_folder_id: str | None = None,
         quota_provider=None,
+        deferring_provider=None,
     ) -> None:
         self.db = db
         self.stop = stop_event
         self.log_path = log_path
         self.drive_folder_id = drive_folder_id
         self._quota_provider = quota_provider
+        self._deferring_provider = deferring_provider or (lambda: False)
+        self._deferring = False
         self._counts = dict.fromkeys((CANDIDATE, READY, UPLOADING, DONE, FAILED), 0)
         self._quota: dict | None = None
         self._auth_message: str | None = None
@@ -73,6 +76,9 @@ class Tray:
         pending = c[CANDIDATE] + c[READY] + c[UPLOADING]
         if c[FAILED]:
             return f"{c[FAILED]} failed, {c[DONE]} uploaded"
+        if self._deferring and pending:
+            # Say why, or this reads as the app being broken mid-game.
+            return f"{pending} waiting - paused while you play"
         if pending:
             return f"{pending} in progress, {c[DONE]} uploaded"
         return f"{c[DONE]} uploaded, idle"
@@ -169,6 +175,11 @@ class Tray:
         except Exception:
             log.debug("count query failed", exc_info=True)
             return
+
+        try:
+            self._deferring = bool(self._deferring_provider())
+        except Exception:
+            log.debug("defer state unavailable", exc_info=True)
 
         if self._quota_provider is not None:
             try:

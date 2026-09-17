@@ -639,6 +639,28 @@ The app no longer needs a terminal window.
 
 Defer-while-gaming or a bandwidth cap; the retention policy; power-event handling. All three attach to components that already exist: the first two are conditions on the worker's claim, retention is a Drive-side sweep over `done` rows, power handling is the existing retry path triggered on wake.
 
+### ✅ Phase 4 closed — 2026-09-16
+
+All three items attach to components that already existed, exactly as the blueprint said they would.
+
+**Defer while gaming (roadblock 4).** `activity.py` asks Windows `SHQueryUserNotificationState`, the API built for "should I interrupt the user right now". It reports a fullscreen Direct3D game distinctly from an ordinary fullscreen window. The worker takes it as a **condition on its claim** — not a new component, and not an interruption of work in flight. An upload already running is allowed to finish, which bounds the interference at one clip rather than discarding transferred bytes.
+
+The check **fails open**: if Windows cannot be asked, uploads proceed. A missed deferral costs some latency once; a stuck "busy" would stop uploading forever and be very hard to notice.
+
+**Retention (roadblock 2).** `retention.py` is the only code in this app that deletes anything, so it is built to refuse:
+
+- Off by default. It runs because it was configured to, never by accident.
+- Only rows that are `done`, still hold a Drive file id, and are not already retired.
+- A **minimum age floor independent of the keep count**, so a misconfigured `keep_newest` cannot remove a clip uploaded minutes ago.
+- `drive.file` scope makes it *incapable* of touching anything the app did not upload, whatever a bug might ask for.
+- Dry run by default in `tools/retention_cli.py`; `--apply` is required to delete.
+
+A retired row stays at `done` with a new `retired_at` timestamp (**D17**). Deleting the row instead would let the reconciler find the clip again and re-upload it, undoing the retention and refilling the quota.
+
+**Power events (roadblock 7).** The blueprint offered a choice between subscribing to power broadcasts and simply retrying from the queue. Neither was quite enough alone, so the sweeper now **detects** sleep instead of waiting it out: `time.monotonic()` is frozen while Windows is suspended but `time.time()` is not, so a gap between the two means the machine slept. That turns a ten-minute staleness timeout into an immediate requeue on wake, with no message window and no new dependency.
+
+**Still open: the retention policy itself.** The mechanism is built and tested; what "newest" should mean for Kip is **D18**, and retention stays off until it is answered.
+
 ### Phase 5 — polish
 
 README with the architecture diagram and — keeping the blueprint's framing — an explanation of why off-the-shelf sync was insufficient. Tests around the settle logic. A GitHub Actions build.
@@ -780,6 +802,8 @@ The blueprint lists twelve open decisions. The four that change the schema or a 
 | **D9** | Implement `content_hash` | → **skip it**, gap documented. ShadowPlay timestamps its filenames, so a same-path collision is close to impossible, and hashing 400 MB per clip is real disk I/O. The column stays in the schema unused, so enabling it later is not a migration. | **Settled** |
 | **D10** | Upload concurrency | → 1. The blueprint's diagram says 1–2; 1 is gentler on your connection while gaming (roadblock 4). It is a config value, so raising it is a one-line change — and `test_db.py` still tests the two-worker claim race. | Default |
 | **D11** | Verifying `done` against Drive | → **no startup verification.** The upload response already proves the file landed; checking every `done` row per launch is one API call per clip forever and gets slower as the library grows. Instead, a tray menu item "Verify Drive contents" runs the check on demand. | **Settled** |
+| **D18** | What "newest" means for retention, and whether to enable it | → **mechanism built, policy unanswered, feature OFF.** Defaults are keep the newest 40 clips and never touch anything under 24 hours old, which at ~225 MB is about 9 GB. The blueprint flagged this as the interesting part of retention and it is Kip's call, not a default worth imposing silently. `tools/retention_cli.py` previews any policy without deleting. | **Open** |
+| **D17** | What happens to a row whose Drive copy retention deleted | → row **stays at `done`** with a `retired_at` timestamp. Deleting the row would let the reconciler rediscover the clip on the next startup scan and re-upload it, undoing the retention and refilling the quota. Keeping `drive_file_id` also records what was there. | **Settled** |
 | **D16** | How a path is made unique on Windows | → a second column, **`path_key`**, holding `normcase(abspath(path))` with the UNIQUE index on it, while `path` keeps the original spelling for display. Storing only the normalised form would put lowercased filenames in the tray; a `lower(path)` expression index would miss non-ASCII game names, since SQLite's `lower()` is ASCII-only. `normalise()` lives in `db.py` and is called nowhere else. | **Settled** |
 | **D15** | Where the `backfill_since` gate is enforced, and what happens to a file that fails it | → **in the settle checker**, which already stats every candidate, and the row is **deleted** rather than moved to a terminal state. Forced by a measured watcher run (17 old clips fired `modified` events during an Explorer browse), which disproved D14's assumption that the watcher only ever sees new files. Deleting rather than adding a `skipped` state keeps the state machine as the blueprint defines it and is self-healing: a re-inserted row is simply dropped again, costing one insert and one delete. Leaving them at `candidate` instead would produce a settle timeout and fill the tray with false `failed` rows. | **Settled** |
 | **D14** | Drive tier, and what the reconciler does with the 48 existing clips | → **Free 15 GB**, and **`backfill_since` set to first-run time**, so the 10.57 GB back catalogue is never queued. Implemented as an mtime gate on the reconciler's insert — no new state, no rows written for skipped files, reversible by lowering the value. The watcher is not gated. Consequences: the tray shows remaining quota from Phase 3, and retention leads Phase 4 instead of trailing it (roadblock 2). | **Settled** |

@@ -13,12 +13,13 @@ records every decision with its reasoning; this file is just the bookmark.
 | 1 — Walking skeleton | Complete. Watcher and settle checker, verified against a simulated recording. |
 | 2 — Durability | Complete. Gate met 2026-09-16 after it first failed silently — see below. |
 | 3 — Livable | Complete. Tray, logs, encrypted token, opt-in autostart. |
-| 4 — Hardening | Not started. Next up. |
-| 5 — Polish | Not started. |
+| 4 — Hardening | Complete. Defer while gaming, retention (off), sleep detection. |
+| 5 — Polish | Not started. Next up: README, CI. |
 
 All five blueprint components now exist: `watcher.py`, `settle.py`,
 `reconciler.py`, `uploader.py` and `tray.py`, plus `db.py`, `drive.py`,
-`config.py`, `logging_setup.py` and `main.py`. 108 tests passing.
+`config.py`, `logging_setup.py`, `activity.py`, `retention.py` and
+`main.py`. 122 tests passing.
 
 ## What the Phase 2 gate found
 
@@ -75,8 +76,12 @@ The four that most shape the code:
 
 ## Picking it back up
 
-Next task is Phase 4: defer uploads while a game is running (or cap bandwidth),
-the retention policy, and power-event handling.
+Next task is Phase 5: README with the architecture diagram, and CI.
+
+One decision is still open: **D18**, the retention policy. The mechanism is
+built and tested but retention is OFF, because how many clips to keep in Drive
+is Kip's call. Preview any policy without deleting:
+`python tools/retention_cli.py --keep 40`
 
 Run it with `.\.venv\Scripts\python.exe -m clipsync.main` for the tray, or add
 `--no-tray` for a console. `python tools/autostart.py --enable` makes it start

@@ -141,6 +141,7 @@ class UploadWorker:
         clock=time.time,
         jitter=random.uniform,
         on_auth_needed=None,
+        should_defer=None,
     ) -> None:
         self.db = db
         self.client = client
@@ -150,15 +151,42 @@ class UploadWorker:
         self._clock = clock
         self._jitter = jitter
         self._on_auth_needed = on_auth_needed or (lambda detail: None)
+        # Roadblock 4. A condition on the claim, not a new component: the
+        # worker simply declines to start something new while you are playing.
+        # An upload already in flight is allowed to finish, which bounds the
+        # interference at one clip rather than aborting work already done.
+        self._should_defer = should_defer or (lambda: False)
+        self._deferring = False
 
     def run(self) -> None:
         """Drain the queue until told to stop. One thread per concurrent upload."""
         while not self.stop.is_set():
+            if self._deferred():
+                self.stop.wait(IDLE_SLEEP_SECONDS)
+                continue
             claimed = self.db.claim_ready(limit=1)
             if not claimed:
                 self.stop.wait(IDLE_SLEEP_SECONDS)
                 continue
             self.process(claimed[0])
+
+    def _deferred(self) -> bool:
+        try:
+            deferring = bool(self._should_defer())
+        except Exception:
+            # Never let a broken check stop uploads forever. Failing open
+            # costs some latency once; failing closed loses clips silently.
+            log.debug("defer check failed; proceeding", exc_info=True)
+            return False
+
+        if deferring != self._deferring:
+            log.info("uploads %s", "paused (fullscreen app)" if deferring else "resumed")
+            self._deferring = deferring
+        return deferring
+
+    @property
+    def deferring(self) -> bool:
+        return self._deferring
 
     def process(self, clip: Clip) -> UploadOutcome:
         """Upload one claimed row and record what happened. Never raises."""
