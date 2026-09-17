@@ -97,20 +97,9 @@ class Application:
         if folder_id:
             log.warning("configured Drive folder %s is gone; recreating", folder_id)
         self.folder_id = self.client.ensure_folder(self.cfg.drive_folder_name)
-        config_module.save(
-            config_module.Config(
-                clips_root=self.cfg.clips_root,
-                drive_folder_id=self.folder_id,
-                drive_folder_name=self.cfg.drive_folder_name,
-                backfill_since=self.cfg.backfill_since,
-                concurrency=self.cfg.concurrency,
-                max_attempts=self.cfg.max_attempts,
-                settle_timeout_seconds=self.cfg.settle_timeout_seconds,
-                stale_upload_seconds=self.cfg.stale_upload_seconds,
-                app_dir=self.cfg.app_dir,
-            ),
-            self.cfg.app_dir / "config.toml",
-        )
+        # Only the folder id is persisted. Everything else is read back from
+        # disk by update(), so a CLI override cannot leak into the config.
+        config_module.update(self.cfg.app_dir / "config.toml", drive_folder_id=self.folder_id)
         log.info("Drive folder: %s", self.folder_id)
 
     def _report_quota(self) -> None:

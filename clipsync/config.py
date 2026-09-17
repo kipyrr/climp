@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 import time
 import tomllib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "ClipSync"
@@ -74,6 +74,19 @@ def load(path: Path = CONFIG_PATH) -> Config:
         stale_upload_seconds=float(raw.get("stale_upload_seconds", 600)),
         app_dir=Path(raw.get("app_dir", APP_DIR)),
     )
+
+
+def update(path: Path = CONFIG_PATH, **changes) -> Config:
+    """Apply changes to the config file, starting from what is on disk.
+
+    Deliberately does NOT take the running Config. A runtime override such as
+    a --clips-root flag lives only in memory, and writing it back would make a
+    one-off test run permanently repoint the app. That happened once; this
+    function exists so it cannot happen again.
+    """
+    updated = replace(load(path), **changes)
+    save(updated, path)
+    return updated
 
 
 def save(cfg: Config, path: Path = CONFIG_PATH) -> None:
