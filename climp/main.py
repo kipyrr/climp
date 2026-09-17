@@ -548,6 +548,13 @@ def main() -> None:
 
     log_path = logging_setup.init(cfg.app_dir, verbose=args.verbose, console=True)
     log.info("log file: %s", log_path)
+    # Record exactly which paths this process resolved and what it can see.
+    # Several hours went into a problem that these four lines would have
+    # answered immediately.
+    log.info("app dir  : %s", cfg.app_dir)
+    log.info("config   : %s (exists: %s)", cfg.app_dir / "config.toml", (cfg.app_dir / "config.toml").exists())
+    log.info("secret   : %s (exists: %s)", cfg.client_secret_path, cfg.client_secret_path.exists())
+    log.info("token    : %s (exists: %s)", cfg.app_dir / "token.bin", (cfg.app_dir / "token.bin").exists())
 
     app = Application(cfg)
     app.log_path = log_path

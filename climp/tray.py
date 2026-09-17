@@ -82,6 +82,13 @@ def _frames() -> list[Image.Image]:
     return _FRAMES
 
 
+def _wrap(text: str, width: int) -> list[str]:
+    """Break a message across menu lines without losing the end of it."""
+    import textwrap
+
+    return textwrap.wrap(text, width=width, break_long_words=True) or [text]
+
+
 def _human(n: int | None) -> str:
     return "unknown" if n is None else f"{n / 1024**3:.1f} GB"
 
@@ -220,7 +227,11 @@ class Tray:
             )
             problem = self._auth_problem()
             if problem:
-                yield pystray.MenuItem(problem[:70], None, enabled=False)
+                # Wrapped rather than truncated: the useful part of these
+                # messages is usually the path at the end, and cutting at a
+                # fixed width removed precisely that.
+                for line in _wrap(problem, 60):
+                    yield pystray.MenuItem(line, None, enabled=False)
                 if self._auth is not None:
                     yield pystray.MenuItem("Sign in to Google...", self._sign_in)
             else:
