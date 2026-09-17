@@ -17,6 +17,7 @@ See IMPLEMENTATION-PLAN.md section 2.9.
 
 from __future__ import annotations
 
+import datetime
 import logging
 import math
 import os
@@ -137,6 +138,9 @@ class Tray:
         self._source = source
         self._auth = auth
         self._menu_state: tuple | None = None
+        # Shown in the menu. Several confusing sessions came from looking at
+        # an instance started before a fix landed; this makes that visible.
+        self.started_at = datetime.datetime.now()
         self._deferring = False
         self._counts = dict.fromkeys((CANDIDATE, READY, UPLOADING, DONE, FAILED), 0)
         self._quota: dict | None = None
@@ -211,11 +215,16 @@ class Tray:
     def _menu(self) -> pystray.Menu:
         def items():
             yield pystray.MenuItem(self._summary(), None, enabled=False)
+            yield pystray.MenuItem(
+                f"running since {self.started_at:%H:%M:%S}", None, enabled=False
+            )
             problem = self._auth_problem()
             if problem:
                 yield pystray.MenuItem(problem[:70], None, enabled=False)
                 if self._auth is not None:
                     yield pystray.MenuItem("Sign in to Google...", self._sign_in)
+            else:
+                yield pystray.MenuItem("Signed in to Google", None, enabled=False)
             yield pystray.MenuItem(self._quota_text(), None, enabled=False)
             yield pystray.Menu.SEPARATOR
 
