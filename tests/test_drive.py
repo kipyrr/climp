@@ -12,7 +12,7 @@ import json
 
 import pytest
 
-from clipsync.drive import DriveClient, SessionExpired
+from climp.drive import DriveClient, SessionExpired
 
 SESSION = "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&upload_id=abc"
 TOTAL = 125_829_120

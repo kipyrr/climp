@@ -16,7 +16,7 @@ import os
 import time
 from pathlib import Path
 
-from clipsync.watcher import Watcher
+from climp.watcher import Watcher
 
 
 def main() -> None:

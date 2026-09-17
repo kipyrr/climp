@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from clipsync.db import CANDIDATE, DONE, FAILED, READY, UPLOADING, Db, normalise
+from climp.db import CANDIDATE, DONE, FAILED, READY, UPLOADING, Db, normalise
 
 CLIP = r"C:\clips\Marvel Rivals\clip.mp4"
 

@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from clipsync import config as config_module
-from clipsync.config import Config
+from climp import config as config_module
+from climp.config import Config
 
 
 def test_first_run_creates_a_config_with_a_cutoff(tmp_path: Path):

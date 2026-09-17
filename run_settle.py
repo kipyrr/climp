@@ -21,8 +21,8 @@ import os
 import time
 from pathlib import Path
 
-from clipsync.settle import POLL_SECONDS, Candidate, Outcome, SettleLoop
-from clipsync.watcher import Watcher
+from climp.settle import POLL_SECONDS, Candidate, Outcome, SettleLoop
+from climp.watcher import Watcher
 
 log = logging.getLogger("run_settle")
 

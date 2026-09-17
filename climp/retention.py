@@ -28,7 +28,7 @@ from pathlib import Path
 
 from googleapiclient.errors import HttpError
 
-from clipsync.db import Clip, Db
+from climp.db import Clip, Db
 
 log = logging.getLogger(__name__)
 

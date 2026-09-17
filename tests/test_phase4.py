@@ -12,10 +12,10 @@ from pathlib import Path
 
 import pytest
 
-from clipsync import activity
-from clipsync.db import CANDIDATE, DONE, READY, Db
-from clipsync.retention import sweep
-from clipsync.uploader import UploadWorker
+from climp import activity
+from climp.db import CANDIDATE, DONE, READY, Db
+from climp.retention import sweep
+from climp.uploader import UploadWorker
 
 
 class FakeClock:

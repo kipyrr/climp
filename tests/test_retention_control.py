@@ -12,10 +12,10 @@ from pathlib import Path
 
 import pytest
 
-from clipsync import config as config_module
-from clipsync.db import CANDIDATE, DONE, Db
-from clipsync.main import RetentionControl
-from clipsync.tray import KEEP_CHOICES, Tray
+from climp import config as config_module
+from climp.db import CANDIDATE, DONE, Db
+from climp.main import RetentionControl
+from climp.tray import KEEP_CHOICES, Tray
 
 
 @pytest.fixture

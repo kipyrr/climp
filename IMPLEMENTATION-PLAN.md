@@ -56,7 +56,7 @@ If you are ever tempted to write `os.listdir` into a third place, that is the bu
 ### 2.1 File layout
 
 ```
-clipsync/
+climp/
   __init__.py
   main.py          # process entry: config → db → reconcile → arm loops → tray
   config.py        # load/validate the config file (Phase 3; a constants module until then)
@@ -563,7 +563,7 @@ Gate met. `spike.py` authenticated, reported quota, created the folder and uploa
 | Drive folder ID | `1B3-qC7-aXJvh-H7jOrY-UsbP3yCrgnWa` | Goes into `config.toml` in Phase 3 |
 | SQLite | 3.50.4 | ≥ 3.35, so the `RETURNING` form of the atomic claim (§2.3.2) is available — write that one, not the fallback |
 | Python | 3.13.15, venv at `.venv/` | — |
-| Token storage | `%LOCALAPPDATA%\ClipSync\token.json`, plaintext | Phase 3 replaces this with DPAPI (roadblock 11) |
+| Token storage | `%LOCALAPPDATA%\climp\token.json`, plaintext | Phase 3 replaces this with DPAPI (roadblock 11) |
 | Free quota | 3.7 GB / ~16 clips | See roadblock 2 — this reordered Phases 3 and 4 |
 
 ### Phase 1 — walking skeleton
@@ -626,7 +626,7 @@ The app no longer needs a terminal window.
 |---|---|---|
 | Tray icon | `tray.py` | Colour tracks the queue: green idle, blue working, red needs attention. Counts, quota, failed clips with their error, retry per clip, open Drive, open log, quit |
 | Quota display | `tray.py` + `main.py` | Cached for 5 minutes, because the tray refreshes every 3 seconds and this is an API call. Expressed in **clips remaining**, not just bytes — bytes do not answer "how many more can I record" |
-| Structured logs | `logging_setup.py` | `%LOCALAPPDATA%\ClipSync\logs\clipsync.log`, 2 MB × 5 rotating. The Google client libraries are pinned to WARNING or they bury everything the app says |
+| Structured logs | `logging_setup.py` | `%LOCALAPPDATA%\climp\logs\climp.log`, 2 MB × 5 rotating. The Google client libraries are pinned to WARNING or they bury everything the app says |
 | Hourly RSS line | `logging_setup.py` | Roadblock 12 is only visible over weeks, so the measurement has to start long before anyone suspects a leak. First reading: 60.3 MB, 13 threads |
 | Token encryption | `drive.py` | Roadblock 11. DPAPI via `CryptProtectData`, written to a temp file and renamed so an interrupted save cannot force a needless sign-in |
 | Launch at login | `tools/autostart.py` | A Startup-folder shortcut, not a registry entry: visible in Explorer and removable without a tool. **Opt-in — nothing enables it on its own** |
@@ -806,14 +806,17 @@ The blueprint lists twelve open decisions. The four that change the schema or a 
 | **D9** | Implement `content_hash` | → **skip it**, gap documented. ShadowPlay timestamps its filenames, so a same-path collision is close to impossible, and hashing 400 MB per clip is real disk I/O. The column stays in the schema unused, so enabling it later is not a migration. | **Settled** |
 | **D10** | Upload concurrency | → 1. The blueprint's diagram says 1–2; 1 is gentler on your connection while gaming (roadblock 4). It is a config value, so raising it is a one-line change — and `test_db.py` still tests the two-worker claim race. | Default |
 | **D11** | Verifying `done` against Drive | → **no startup verification.** The upload response already proves the file landed; checking every `done` row per launch is one API call per clip forever and gets slower as the library grows. Instead, a tray menu item "Verify Drive contents" runs the check on demand. | **Settled** |
+| **D21** | What the "working" animation should be driven by | → the **same condition that previously chose the blue icon**: anything at `candidate`, `ready` or `uploading`. Only the presentation changed, not the meaning. A `failed` row does **not** animate — nothing is running, and a pulse would imply otherwise. | **Settled** |
+| **D20** | Whether the icon keeps a distinct colour for "needs attention" | → **no.** With red as the base colour there is no room for a red alert, and the brief asked for a minimal red circle. Failures still surface in the tooltip and as their own menu section with per-clip errors, and an auth failure still raises a Windows notification. This is a real if small loss of an at-a-glance signal, and it was Kip's explicit choice of design. | **Settled** |
 | **D19** | Whether the tray may write anything beyond a retry reset | → **yes, but only config, never state.** Kip asked to set the retention amount from the tray rather than a config file. A menu click writes `config.toml`; it moves no clip between states, and deletion still happens only in the retention loop, which the menu signals rather than calls. The blueprint's actual concern — that the tray stays a view over the queue — is untouched. | **Settled** |
+| **D22** | What "choose the source file" means for a folder watcher | → **the clips folder**, not a single file. The app watches a directory continuously; a single file has no meaning for an ongoing watcher, and clips arrive as new files. The tray offers the current folder, its full path, its clip count, and a picker. Changing it re-scans to completion and only then arms the watcher, preserving the startup ordering rule. | **Settled** |
 | **D18** | What "newest" means for retention, and whether to enable it | → **answered by not answering it in code.** Rather than fixing a number, the keep count is a tray menu choice — off, or the newest 10 / 20 / 40 / 60 / 100, each labelled with the GB it implies. Ships OFF; selecting a number enables it. A 24-hour floor applies regardless of the choice, so a small number picked by mistake cannot remove something recorded this morning. `tools/retention_cli.py` previews any policy without deleting. | **Settled** |
 | **D17** | What happens to a row whose Drive copy retention deleted | → row **stays at `done`** with a `retired_at` timestamp. Deleting the row would let the reconciler rediscover the clip on the next startup scan and re-upload it, undoing the retention and refilling the quota. Keeping `drive_file_id` also records what was there. | **Settled** |
 | **D16** | How a path is made unique on Windows | → a second column, **`path_key`**, holding `normcase(abspath(path))` with the UNIQUE index on it, while `path` keeps the original spelling for display. Storing only the normalised form would put lowercased filenames in the tray; a `lower(path)` expression index would miss non-ASCII game names, since SQLite's `lower()` is ASCII-only. `normalise()` lives in `db.py` and is called nowhere else. | **Settled** |
 | **D15** | Where the `backfill_since` gate is enforced, and what happens to a file that fails it | → **in the settle checker**, which already stats every candidate, and the row is **deleted** rather than moved to a terminal state. Forced by a measured watcher run (17 old clips fired `modified` events during an Explorer browse), which disproved D14's assumption that the watcher only ever sees new files. Deleting rather than adding a `skipped` state keeps the state machine as the blueprint defines it and is self-healing: a re-inserted row is simply dropped again, costing one insert and one delete. Leaving them at `candidate` instead would produce a settle timeout and fill the tray with false `failed` rows. | **Settled** |
 | **D14** | Drive tier, and what the reconciler does with the 48 existing clips | → **Free 15 GB**, and **`backfill_since` set to first-run time**, so the 10.57 GB back catalogue is never queued. Implemented as an mtime gate on the reconciler's insert — no new state, no rows written for skipped files, reversible by lowering the value. The watcher is not gated. Consequences: the tray shows remaining quota from Phase 3, and retention leads Phase 4 instead of trailing it (roadblock 2). | **Settled** |
 | **D13** | OAuth audience: Testing or In production | → **Testing**, accepted deliberately. Publishing requires App-domain homepage and privacy-policy URLs Kip does not have; the blueprint assumed publishing would be free. Cost is a re-auth roughly weekly, handled in `drive.py` + the tray (roadblock 3). Reversible in seconds later, with no migration — same client ID, scope, folder and database; only the stored token is discarded. **Revisit when the repo has a public URL.** | **Settled** |
-| **D12** | Where db/config/token live | → `%LOCALAPPDATA%\ClipSync\` (`clips.db`, `config.toml`, `token.bin`). The blueprint's only constraint is that the token cannot sit inside the PyInstaller bundle; this satisfies it and survives reinstalls. | Default |
+| **D12** | Where db/config/token live | → `%LOCALAPPDATA%\climp\` (`clips.db`, `config.toml`, `token.bin`). The blueprint's only constraint is that the token cannot sit inside the PyInstaller bundle; this satisfies it and survives reinstalls. | Default |
 
 ### Unknowns I need from you (not design decisions — facts)
 

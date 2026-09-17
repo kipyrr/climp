@@ -25,8 +25,8 @@ from enum import Enum
 import httplib2
 from googleapiclient.errors import HttpError
 
-from clipsync.db import Clip, Db
-from clipsync.drive import AuthExpired, SessionExpired
+from climp.db import Clip, Db
+from climp.drive import AuthExpired, SessionExpired
 
 log = logging.getLogger(__name__)
 

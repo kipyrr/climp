@@ -156,7 +156,7 @@ class DriveClient:
             return
 
         blob = win32crypt.CryptProtectData(
-            creds.to_json().encode("utf-8"), "ClipSync OAuth token", None, None, None, 0
+            creds.to_json().encode("utf-8"), "climp OAuth token", None, None, None, 0
         )
         # Write then replace, so an interrupted save cannot leave a truncated
         # token that would force a needless sign-in.

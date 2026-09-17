@@ -11,8 +11,8 @@ from pathlib import Path
 
 import pytest
 
-from clipsync.db import CANDIDATE, DONE, Db
-from clipsync.reconciler import reconcile
+from climp.db import CANDIDATE, DONE, Db
+from climp.reconciler import reconcile
 
 
 class FakeClock:

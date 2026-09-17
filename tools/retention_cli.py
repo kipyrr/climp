@@ -17,10 +17,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from clipsync import config as config_module  # noqa: E402
-from clipsync.db import DONE, Db  # noqa: E402
-from clipsync.drive import DriveClient  # noqa: E402
-from clipsync.retention import sweep  # noqa: E402
+from climp import config as config_module  # noqa: E402
+from climp.db import DONE, Db  # noqa: E402
+from climp.drive import DriveClient  # noqa: E402
+from climp.retention import sweep  # noqa: E402
 
 
 def main() -> int:

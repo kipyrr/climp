@@ -33,7 +33,7 @@ from googleapiclient.http import MediaFileUpload
 # Only ever this scope. Never drive. See IMPLEMENTATION-PLAN.md roadblock 3.
 SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 
-APP_DIR = Path(os.environ["LOCALAPPDATA"]) / "ClipSync"
+APP_DIR = Path(os.environ["LOCALAPPDATA"]) / "climp"
 CLIENT_SECRET = APP_DIR / "client_secret.json"
 TOKEN = APP_DIR / "token.json"
 STATE = APP_DIR / "spike_state.json"

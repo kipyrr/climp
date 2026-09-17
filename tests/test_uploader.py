@@ -16,9 +16,9 @@ import httplib2
 import pytest
 from googleapiclient.errors import HttpError
 
-from clipsync.db import DONE, FAILED, READY, UPLOADING, Db
-from clipsync.drive import AuthExpired, ResumableUpload, SessionExpired
-from clipsync.uploader import (
+from climp.db import DONE, FAILED, READY, UPLOADING, Db
+from climp.drive import AuthExpired, ResumableUpload, SessionExpired
+from climp.uploader import (
     ErrorClass,
     Result,
     UploadWorker,

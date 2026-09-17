@@ -1,6 +1,6 @@
 """Configuration. One file, one dataclass, no reads scattered through the app.
 
-Lives in %LOCALAPPDATA%\\ClipSync alongside the database and the token (D12) --
+Lives in %LOCALAPPDATA%\\climp alongside the database and the token (D12) --
 outside any repo, and outside a PyInstaller bundle, which is the blueprint's
 one stated constraint on the token path.
 """
@@ -13,8 +13,12 @@ import tomllib
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-APP_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "ClipSync"
+APP_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "climp"
 CONFIG_PATH = APP_DIR / "config.toml"
+
+# The app was called ClipSync until 2026-09-16. Installs from before the rename
+# keep their token, database and config in the old folder.
+LEGACY_APP_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "ClipSync"
 
 DEFAULT_CLIPS_ROOT = Path(os.environ.get("USERPROFILE", Path.home())) / "Videos" / "NVIDIA"
 DEFAULT_FOLDER_NAME = "Game Clips"
@@ -61,12 +65,33 @@ class Config:
         return self.app_dir / "client_secret.json"
 
 
+def migrate_legacy_app_dir(new: Path = APP_DIR, old: Path = LEGACY_APP_DIR) -> bool:
+    """Move a pre-rename ClipSync folder to climp. Returns True if it moved.
+
+    Moved rather than copied: two databases would drift, and the one left
+    behind would quietly stop being updated while still looking valid. Only
+    ever runs when the new folder does not exist yet, so it cannot overwrite
+    anything.
+    """
+    if new.exists() or not old.exists():
+        return False
+    try:
+        old.rename(new)
+    except OSError:
+        return False
+    return True
+
+
 def load(path: Path = CONFIG_PATH) -> Config:
     """Read config, creating it with defaults on first run.
 
     Writing backfill_since on first run is what pins the cutoff to "the moment
-    ClipSync was first started here", so the existing library is never queued.
+    climp was first started here", so the existing library is never queued.
     """
+    if not path.exists():
+        # Before deciding this is a first run, check it is not just a rename.
+        if path == CONFIG_PATH:
+            migrate_legacy_app_dir()
     if not path.exists():
         cfg = Config()
         save(cfg, path)
@@ -108,7 +133,7 @@ def update(path: Path = CONFIG_PATH, **changes) -> Config:
 
 def save(cfg: Config, path: Path = CONFIG_PATH) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    body = f'''# ClipSync configuration.
+    body = f'''# climp configuration.
 # Regenerated only if deleted. See IMPLEMENTATION-PLAN.md section 7.
 
 clips_root = {_toml_str(cfg.clips_root)}

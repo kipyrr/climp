@@ -18,7 +18,7 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-LOG_NAME = "clipsync.log"
+LOG_NAME = "climp.log"
 MAX_BYTES = 2 * 1024 * 1024
 BACKUPS = 5
 RSS_INTERVAL_SECONDS = 3600

@@ -17,7 +17,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from clipsync.db import Db
+from climp.db import Db
 
 log = logging.getLogger(__name__)
 
@@ -66,7 +66,7 @@ def reconcile(
             continue
         scanned += 1
 
-        from clipsync.db import normalise  # local: keeps normalisation owned by db.py
+        from climp.db import normalise  # local: keeps normalisation owned by db.py
 
         if normalise(path) in known:
             already_known += 1

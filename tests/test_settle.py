@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from clipsync.settle import (
+from climp.settle import (
     Candidate,
     Outcome,
     Probe,

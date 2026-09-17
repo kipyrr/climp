@@ -11,8 +11,16 @@ from pathlib import Path
 
 import pytest
 
-from clipsync.db import CANDIDATE, DONE, FAILED, READY, UPLOADING, Db
-from clipsync.tray import ATTENTION, BUSY, IDLE, Tray
+from climp.db import CANDIDATE, DONE, FAILED, READY, UPLOADING, Db
+from climp.tray import (
+    ANIMATION_PERIOD_SECONDS,
+    FRAME_COUNT,
+    RED,
+    REFRESH_SECONDS,
+    Tray,
+    _frames,
+    _icon_image,
+)
 
 CLIP = r"C:\clips\Marvel Rivals\clip.mp4"
 
@@ -80,7 +88,7 @@ def test_a_broken_quota_provider_does_not_break_the_tray(db: Db):
 # --- the icon colour ------------------------------------------------------
 
 
-def test_icon_colours_track_the_queue(db: Db, tray: Tray):
+def test_counts_track_the_queue(db: Db, tray: Tray):
     tray.refresh()
     assert tray._counts[DONE] == 0
 
@@ -96,8 +104,95 @@ def test_icon_colours_track_the_queue(db: Db, tray: Tray):
     assert tray._counts[FAILED] == 1
 
 
-def test_colours_are_distinct():
-    assert len({IDLE, BUSY, ATTENTION}) == 3
+# --- the icon -------------------------------------------------------------
+
+
+def centre(img):
+    return img.getpixel((32, 32))
+
+
+def test_idle_icon_is_a_solid_red_circle(tray: Tray):
+    img = _icon_image(1.0)
+    assert centre(img)[:3] == RED
+    # A corner stays transparent, so it is a circle rather than a square.
+    assert img.getpixel((1, 1))[3] == 0
+
+
+def test_brightness_zero_is_black_not_transparent():
+    px = centre(_icon_image(0.0))
+    assert px[:3] == (0, 0, 0)
+    assert px[3] == 255, "fading to transparent would make the icon vanish, not darken"
+
+
+def test_the_pulse_runs_red_to_black_to_red():
+    frames = _frames()
+    px = [centre(f)[0] for f in frames]
+
+    assert px[0] == 255, "starts at full red"
+    assert px[len(px) // 2] == 0, "reaches black halfway"
+    assert px[-1] < 255 and px[-1] > 200, "on its way back to red as it loops"
+
+
+def test_the_fade_has_no_sudden_jumps():
+    """A visible step would read as a flicker rather than a fade."""
+    px = [centre(f)[0] for f in _frames()]
+    steps = [abs(px[i] - px[i - 1]) for i in range(len(px))]  # includes the wrap
+    assert max(steps) < 40, f"largest single-frame change was {max(steps)} of 255"
+
+
+def test_the_loop_joins_up_smoothly():
+    """The wrap from last frame to first must be no harsher than any other step."""
+    px = [centre(f)[0] for f in _frames()]
+    wrap = abs(px[0] - px[-1])
+    typical = max(abs(px[i] - px[i - 1]) for i in range(1, len(px)))
+    assert wrap <= typical, "the loop point would be visible as a jolt"
+
+
+def test_animation_period_matches_the_existing_refresh_cadence():
+    """The only timing the icon previously had; kept so the change is visual only."""
+    assert ANIMATION_PERIOD_SECONDS == REFRESH_SECONDS
+    assert FRAME_COUNT >= 20, "too few frames to read as a fade"
+
+
+# --- when it animates -----------------------------------------------------
+
+
+def test_idle_does_not_animate(db: Db, tray: Tray):
+    tray.refresh()
+    assert tray._animating is False
+
+
+def test_work_in_the_queue_animates(db: Db, tray: Tray):
+    db.insert_candidate(CLIP)
+    tray.refresh()
+    assert tray._animating is True
+
+
+def test_animation_stops_when_the_work_finishes(db: Db, tray: Tray):
+    db.insert_candidate(CLIP)
+    tray.refresh()
+    assert tray._animating is True
+
+    clip_id = db.by_state(CANDIDATE)[0].id
+    db.mark_ready(clip_id)
+    db.claim_ready()
+    db.mark_done(clip_id, "fileid", "link")
+    tray.refresh()
+
+    assert tray._animating is False
+    assert centre(tray.current_image)[:3] == RED, "must settle on solid red, not mid-fade"
+
+
+def test_a_finished_queue_with_failures_does_not_animate(db: Db, tray: Tray):
+    """Failed is terminal -- nothing is running, so nothing should pulse."""
+    db.insert_candidate(CLIP)
+    clip_id = db.by_state(CANDIDATE)[0].id
+    db.mark_ready(clip_id)
+    db.claim_ready()
+    db.mark_failed(clip_id, "nope")
+    tray.refresh()
+
+    assert tray._animating is False
 
 
 # --- the one thing it writes ---------------------------------------------

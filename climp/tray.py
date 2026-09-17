@@ -18,6 +18,7 @@ See IMPLEMENTATION-PLAN.md section 2.9.
 from __future__ import annotations
 
 import logging
+import math
 import os
 import subprocess
 import threading
@@ -27,7 +28,7 @@ from pathlib import Path
 import pystray
 from PIL import Image, ImageDraw
 
-from clipsync.db import CANDIDATE, DONE, FAILED, READY, UPLOADING, Db
+from climp.db import CANDIDATE, DONE, FAILED, READY, UPLOADING, Db
 
 log = logging.getLogger(__name__)
 
@@ -37,22 +38,80 @@ REFRESH_SECONDS = 3.0
 # tray menu is miserable, and these cover the useful range at ~225 MB a clip.
 KEEP_CHOICES = (10, 20, 40, 60, 100)
 
-IDLE = (0x4C, 0xAF, 0x50)      # green
-BUSY = (0x21, 0x96, 0xF3)      # blue
-ATTENTION = (0xF4, 0x43, 0x36)  # red
+RED = (255, 0, 0)
+
+# One full red -> black -> red cycle. Matched to REFRESH_SECONDS because that
+# was the only cadence the icon previously had: before this, the icon did not
+# animate at all, it swapped between three flat colours on each refresh.
+ANIMATION_PERIOD_SECONDS = REFRESH_SECONDS
+FRAME_SECONDS = 0.1
+FRAME_COUNT = max(2, round(ANIMATION_PERIOD_SECONDS / FRAME_SECONDS))
 
 
-def _icon_image(colour: tuple[int, int, int]) -> Image.Image:
+def _icon_image(brightness: float = 1.0) -> Image.Image:
+    """A solid circle. brightness 1.0 is red, 0.0 is black."""
+    b = min(max(brightness, 0.0), 1.0)
+    fill = (round(RED[0] * b), round(RED[1] * b), round(RED[2] * b), 255)
     img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-    d.ellipse((4, 4, 60, 60), fill=colour)
-    # A play triangle: this uploads recordings.
-    d.polygon([(26, 20), (26, 44), (46, 32)], fill=(255, 255, 255, 255))
+    ImageDraw.Draw(img).ellipse((4, 4, 60, 60), fill=fill)
     return img
+
+
+def _build_frames() -> list[Image.Image]:
+    """Pre-render the pulse once, so the animation loop only swaps images.
+
+    Cosine rather than a triangle wave: a linear ramp reverses direction
+    abruptly at both ends, which reads as a flinch. Cosine eases through red
+    and through black, so there is no moment where the rate of change jumps.
+    """
+    frames = []
+    for i in range(FRAME_COUNT):
+        phase = 2 * math.pi * i / FRAME_COUNT
+        frames.append(_icon_image((math.cos(phase) + 1) / 2))
+    return frames
+
+
+_FRAMES: list[Image.Image] | None = None
+
+
+def _frames() -> list[Image.Image]:
+    global _FRAMES
+    if _FRAMES is None:
+        _FRAMES = _build_frames()
+    return _FRAMES
 
 
 def _human(n: int | None) -> str:
     return "unknown" if n is None else f"{n / 1024**3:.1f} GB"
+
+
+def ask_for_folder(initial: str | None = None) -> str | None:
+    """Show a folder picker. Returns the chosen path, or None if cancelled.
+
+    tkinter rather than a native shell dialog: it ships with Python, needs no
+    extra dependency, and the root window is created and destroyed here so
+    nothing lingers.
+    """
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+    except ImportError:
+        log.error("tkinter is unavailable, so the folder picker cannot open")
+        return None
+
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+    try:
+        chosen = filedialog.askdirectory(
+            title="Choose the folder climp should watch for clips",
+            initialdir=initial or "",
+            mustexist=True,
+        )
+    finally:
+        root.destroy()
+
+    return chosen or None
 
 
 class Tray:
@@ -65,6 +124,7 @@ class Tray:
         quota_provider=None,
         deferring_provider=None,
         retention=None,
+        source=None,
     ) -> None:
         self.db = db
         self.stop = stop_event
@@ -73,11 +133,20 @@ class Tray:
         self._quota_provider = quota_provider
         self._deferring_provider = deferring_provider or (lambda: False)
         self._retention = retention
+        self._source = source
         self._deferring = False
         self._counts = dict.fromkeys((CANDIDATE, READY, UPLOADING, DONE, FAILED), 0)
         self._quota: dict | None = None
         self._auth_message: str | None = None
-        self.icon = pystray.Icon("clipsync", _icon_image(IDLE), "ClipSync", menu=self._menu())
+        self._animating = False
+
+        # The image the icon should be showing. Kept separately so the tray's
+        # visual state can be read without a live Win32 window -- pystray
+        # registers a window class per Icon, so constructing one per test
+        # eventually fails with "class already exists".
+        self.current_image = _icon_image(1.0)
+        self.current_title = "climp"
+        self.icon: pystray.Icon | None = None
 
     # --- what the menu shows ---------------------------------------------
 
@@ -143,8 +212,13 @@ class Tray:
                 yield pystray.Menu.SEPARATOR
                 yield pystray.MenuItem("Failed clips", pystray.Menu(*failures))
 
-            if self._retention is not None:
+            if self._source is not None:
                 yield pystray.Menu.SEPARATOR
+                yield pystray.MenuItem(self._source_label(), pystray.Menu(*self._source_items()))
+
+            if self._retention is not None:
+                if self._source is None:
+                    yield pystray.Menu.SEPARATOR
                 yield pystray.MenuItem(self._retention_label(), pystray.Menu(*self._retention_items()))
 
             yield pystray.Menu.SEPARATOR
@@ -154,6 +228,53 @@ class Tray:
             yield pystray.MenuItem("Quit", self._quit)
 
         return pystray.Menu(items)
+
+    # --- clips source folder ----------------------------------------------
+
+    def _source_label(self) -> str:
+        return f"Clips from: {self._source.clips_root.name}"
+
+    def _source_items(self):
+        src = self._source
+        root = src.clips_root
+
+        # Full path on its own line: the folder name alone is ambiguous when
+        # two drives both have a Videos folder.
+        yield pystray.MenuItem(str(root), None, enabled=False)
+        if src.exists():
+            yield pystray.MenuItem(f"{src.clip_count()} .mp4 files in it", None, enabled=False)
+        else:
+            yield pystray.MenuItem("!! this folder no longer exists", None, enabled=False)
+
+        yield pystray.Menu.SEPARATOR
+        yield pystray.MenuItem("Choose a different folder...", self._choose_source)
+        yield pystray.MenuItem("Open this folder", self._open_source)
+
+    def _choose_source(self, _icon=None, _item=None) -> None:
+        """Ask for a folder, then repoint the watcher at it.
+
+        Runs on its own thread: the dialog blocks, and blocking a pystray menu
+        callback freezes the whole tray icon until it closes.
+        """
+        threading.Thread(target=self._choose_source_blocking, name="pick-folder", daemon=True).start()
+
+    def _choose_source_blocking(self) -> None:
+        chosen = ask_for_folder(str(self._source.clips_root))
+        if not chosen:
+            return
+        try:
+            if self._source.set_clips_root(Path(chosen)):
+                log.info("clips folder set from the tray: %s", chosen)
+            else:
+                log.info("clips folder unchanged")
+        except Exception:
+            log.exception("could not change the clips folder")
+        self.refresh()
+
+    def _open_source(self, _icon=None, _item=None) -> None:
+        root = self._source.clips_root
+        if root.is_dir():
+            os.startfile(root)  # noqa: S606 - the user's own folder
 
     # --- retention (D18/D19) ----------------------------------------------
 
@@ -229,14 +350,17 @@ class Tray:
     def _quit(self, _icon=None, _item=None) -> None:
         log.info("quit requested from the tray")
         self.stop.set()
-        self.icon.stop()
+        if self.icon is not None:
+            self.icon.stop()
 
     def auth_needed(self, detail: str) -> None:
         """Called by the upload worker when a human has to sign in (D13)."""
         self._auth_message = detail
         self.refresh()
+        if self.icon is None:
+            return
         try:
-            self.icon.notify("ClipSync needs you to sign in to Google again", "Sign in required")
+            self.icon.notify("climp needs you to sign in to Google again", "Sign in required")
         except Exception:
             log.debug("tray notification unavailable", exc_info=True)
 
@@ -260,27 +384,66 @@ class Tray:
             except Exception:
                 log.debug("quota read failed", exc_info=True)
 
-        if self._counts[FAILED] or self._auth_message:
-            colour = ATTENTION
-        elif self._counts[UPLOADING] or self._counts[READY] or self._counts[CANDIDATE]:
-            colour = BUSY
-        else:
-            colour = IDLE
+        # Same condition that used to pick the "busy" colour, so what counts as
+        # working has not changed -- only how it is shown.
+        self._animating = bool(
+            self._counts[UPLOADING] or self._counts[READY] or self._counts[CANDIDATE]
+        )
+        if not self._animating:
+            self._show(_icon_image(1.0))
 
-        self.icon.icon = _icon_image(colour)
-        self.icon.title = f"ClipSync - {self._summary()}"
-        try:
-            self.icon.update_menu()
-        except Exception:
-            log.debug("menu update failed", exc_info=True)
+        self.current_title = f"climp - {self._summary()}"
+        if self.icon is not None:
+            self.icon.title = self.current_title
+            try:
+                self.icon.update_menu()
+            except Exception:
+                log.debug("menu update failed", exc_info=True)
+
+    def _show(self, image) -> None:
+        self.current_image = image
+        if self.icon is not None:
+            self.icon.icon = image
 
     def _refresh_loop(self) -> None:
         while not self.stop.is_set():
             self.refresh()
             self.stop.wait(REFRESH_SECONDS)
-        self.icon.stop()
+        if self.icon is not None:
+            self.icon.stop()
+
+    def _animate_loop(self) -> None:
+        """Pulse red to black and back while there is work in the queue.
+
+        Separate from the refresh loop on purpose: refreshing queries the
+        database and rebuilds the menu, which is far too expensive to do at
+        frame rate. This only swaps a pre-rendered image.
+        """
+        frames = _frames()
+        i = 0
+        was_animating = False
+
+        while not self.stop.is_set():
+            if self._animating:
+                self._show(frames[i % len(frames)])
+                i += 1
+                was_animating = True
+            elif was_animating:
+                # Work finished: settle back on solid red, at full brightness
+                # rather than wherever the fade happened to be.
+                self._show(_icon_image(1.0))
+                was_animating = False
+                i = 0
+            self.stop.wait(FRAME_SECONDS)
 
     def run(self) -> None:
-        """Blocks on the main thread until Quit or the stop event."""
+        """Blocks on the main thread until Quit or the stop event.
+
+        The pystray Icon is built here rather than in __init__, because
+        creating one registers a Win32 window class and there should only ever
+        be one of those per process.
+        """
+        self.icon = pystray.Icon("climp", self.current_image, self.current_title, menu=self._menu())
         threading.Thread(target=self._refresh_loop, name="tray-refresh", daemon=True).start()
+        threading.Thread(target=self._animate_loop, name="tray-animate", daemon=True).start()
         self.icon.run()

@@ -57,7 +57,7 @@ leg took 27.1s against 40.2s for a full re-upload.
 
 ## Machine-specific state, deliberately outside this repo
 
-`%LOCALAPPDATA%\ClipSync\` holds `client_secret.json`, `token.json`,
+`%LOCALAPPDATA%\climp\` holds `client_secret.json`, `token.json`,
 `config.toml` and `clips.db`. None of it is in git, and none of it should be.
 
 `config.toml` carries `backfill_since`, pinned to first launch. That is what
@@ -78,6 +78,10 @@ The four that most shape the code:
 
 All six phases are complete. The app works and is in daily use.
 
+**Renamed from ClipSync to climp on 2026-09-16**, along with a red-circle icon
+that pulses while working, and a tray menu entry for choosing which folder
+clips come from. The app-data folder migrates itself from the old name.
+
 Remaining optional work, none of it blocking:
   * Publish the repo. That gives a public URL, which is what lets OAuth move
     from Testing to In production and ends the weekly re-sign-in (D13).
@@ -89,9 +93,9 @@ Retention is off by default and set from the tray menu: right-click the icon,
 open "Keep in Drive", pick a number. Selecting one turns it on; "Keep
 everything" turns it off. Changes apply without a restart.
 
-There is a Desktop shortcut (`ClipSync.lnk`) that starts it with no console.
+There is a Desktop shortcut (`climp.lnk`) that starts it with no console.
 `python tools/autostart.py --enable` also starts it at login.
 
-Run it with `.\.venv\Scripts\python.exe -m clipsync.main` for the tray, or add
+Run it with `.\.venv\Scripts\python.exe -m climp.main` for the tray, or add
 `--no-tray` for a console. `python tools/autostart.py --enable` makes it start
 at login; it is off unless you turn it on.

@@ -23,21 +23,22 @@ import logging
 import signal
 import threading
 import time
+from dataclasses import replace
 from pathlib import Path
 
-from clipsync import activity
-from clipsync import config as config_module
-from clipsync import logging_setup
-from clipsync import retention
-from clipsync.db import Db
-from clipsync.drive import AuthExpired, DriveClient
-from clipsync.reconciler import reconcile
-from clipsync.settle import POLL_SECONDS, DbSettleChecker
-from clipsync.uploader import UploadWorker
-from clipsync.tray import Tray
-from clipsync.watcher import Watcher
+from climp import activity
+from climp import config as config_module
+from climp import logging_setup
+from climp import retention
+from climp.db import Db
+from climp.drive import AuthExpired, DriveClient
+from climp.reconciler import reconcile
+from climp.settle import POLL_SECONDS, DbSettleChecker
+from climp.uploader import UploadWorker
+from climp.tray import Tray
+from climp.watcher import Watcher
 
-log = logging.getLogger("clipsync")
+log = logging.getLogger("climp")
 
 QUOTA_REFRESH_SECONDS = 300
 # A gap this large between wall time and monotonic time means Windows slept.
@@ -99,6 +100,37 @@ class RetentionControl:
         self.trigger.set()
 
 
+class SourceControl:
+    """Lets the tray change which folder clips are taken from.
+
+    Repointing at runtime has to preserve the startup invariant: reconcile the
+    new folder to completion BEFORE arming the watcher on it. Reversed, a clip
+    recorded during the scan is missed by both.
+    """
+
+    def __init__(self, app: "Application") -> None:
+        self._app = app
+
+    @property
+    def clips_root(self) -> Path:
+        return self._app.cfg.clips_root
+
+    def exists(self) -> bool:
+        try:
+            return self.clips_root.is_dir()
+        except OSError:
+            return False
+
+    def clip_count(self) -> int:
+        try:
+            return sum(1 for _ in self.clips_root.rglob("*.mp4"))
+        except OSError:
+            return 0
+
+    def set_clips_root(self, new_root: Path) -> bool:
+        return self._app.change_clips_root(Path(new_root))
+
+
 class Application:
     def __init__(self, cfg: config_module.Config, allow_interactive_auth: bool = True) -> None:
         self.cfg = cfg
@@ -112,6 +144,8 @@ class Application:
         self._threads: list[threading.Thread] = []
         self._workers: list[UploadWorker] = []
         self.retention_control = RetentionControl(self.db, cfg.app_dir / "config.toml", cfg)
+        self.source_control = SourceControl(self)
+        self._source_lock = threading.Lock()
         self._quota_cache: dict | None = None
         self._quota_checked_at = 0.0
 
@@ -152,6 +186,37 @@ class Application:
             )
         else:
             log.info("retention off - change it from the tray menu at any time")
+
+    def change_clips_root(self, new_root: Path) -> bool:
+        """Point the watcher and the scan at a different folder. Returns True if it changed."""
+        from climp.db import normalise
+
+        if not new_root.is_dir():
+            log.warning("not a folder, ignoring: %s", new_root)
+            return False
+
+        with self._source_lock:
+            if normalise(new_root) == normalise(self.cfg.clips_root):
+                return False
+
+            old_root = self.cfg.clips_root
+            config_module.update(self.cfg.app_dir / "config.toml", clips_root=new_root)
+            self.cfg = replace(self.cfg, clips_root=new_root)
+
+            # Stop watching the old folder first, so events from it cannot
+            # arrive while the new one is being scanned.
+            if self.watcher is not None:
+                self.watcher.stop()
+                self.watcher = None
+
+            # Same ordering rule as startup: scan to completion, then arm.
+            reconcile(self.db, new_root, backfill_since=self.cfg.backfill_since)
+
+            self.watcher = Watcher(new_root, on_candidate=self.db.insert_candidate)
+            self.watcher.start()
+
+        log.info("clips folder changed: %s -> %s", old_root, new_root)
+        return True
 
     def _authorise(self) -> None:
         try:
@@ -343,7 +408,7 @@ class Application:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="ClipSync - upload game clips to Drive automatically.")
+    ap = argparse.ArgumentParser(description="climp - upload game clips to Drive automatically.")
     ap.add_argument("--clips-root", type=Path, help="Override the configured clips folder.")
     ap.add_argument("--seconds", type=float, help="Run for N seconds then stop. Omit for Ctrl-C.")
     ap.add_argument("--no-tray", action="store_true", help="Run headless with a console status line.")
@@ -376,6 +441,7 @@ def main() -> None:
         quota_provider=app.quota,
         deferring_provider=lambda: app.deferring,
         retention=app.retention_control,
+        source=app.source_control,
     )
     log.info("running in the tray. Use its Quit item to stop.")
     try:

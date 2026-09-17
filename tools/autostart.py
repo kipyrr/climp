@@ -1,4 +1,4 @@
-"""Enable or disable launching ClipSync when you log in.
+"""Enable or disable launching climp when you log in.
 
 Uses a shortcut in the user's Startup folder rather than a registry Run entry:
 it is visible in Explorer, removable without a tool, and touches nothing
@@ -24,9 +24,9 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 PYTHONW = REPO / ".venv" / "Scripts" / "pythonw.exe"  # no console window
 STARTUP = Path(os.environ["APPDATA"]) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
-SHORTCUT = STARTUP / "ClipSync.lnk"
+SHORTCUT = STARTUP / "climp.lnk"
 DESKTOP = Path(os.environ["USERPROFILE"]) / "Desktop"
-DESKTOP_SHORTCUT = DESKTOP / "ClipSync.lnk"
+DESKTOP_SHORTCUT = DESKTOP / "climp.lnk"
 
 
 def create_shortcut(target: Path) -> None:
@@ -38,10 +38,10 @@ def create_shortcut(target: Path) -> None:
     script = f"""
 $s = (New-Object -ComObject WScript.Shell).CreateShortcut('{target}')
 $s.TargetPath = '{PYTHONW}'
-$s.Arguments = '-m clipsync.main'
+$s.Arguments = '-m climp.main'
 $s.WorkingDirectory = '{REPO}'
-$s.IconLocation = '{REPO / "clipsync.ico"},0'
-$s.Description = 'ClipSync - upload game clips to Google Drive'
+$s.IconLocation = '{REPO / "climp.ico"},0'
+$s.Description = 'climp - upload game clips to Google Drive'
 $s.Save()
 """
     subprocess.run(
@@ -56,7 +56,7 @@ def main() -> int:
     g.add_argument("--enable", action="store_true")
     g.add_argument("--disable", action="store_true")
     g.add_argument("--status", action="store_true")
-    g.add_argument("--desktop", action="store_true", help="Put a ClipSync icon on the Desktop.")
+    g.add_argument("--desktop", action="store_true", help="Put a climp icon on the Desktop.")
     g.add_argument("--remove-desktop", action="store_true")
     args = ap.parse_args()
 
@@ -78,7 +78,7 @@ def main() -> int:
         create_shortcut(DESKTOP_SHORTCUT)
         print(f"Added: {DESKTOP_SHORTCUT}")
         print()
-        print("Double-click it to start ClipSync. No console window appears -")
+        print("Double-click it to start climp. No console window appears -")
         print("look for the icon near your clock instead.")
         return 0
 
@@ -96,14 +96,14 @@ def main() -> int:
             return 1
         STARTUP.mkdir(parents=True, exist_ok=True)
         create_shortcut(SHORTCUT)
-        print(f"Enabled. ClipSync will start at login via:\n  {SHORTCUT}")
+        print(f"Enabled. climp will start at login via:\n  {SHORTCUT}")
         print("\nIt launches with pythonw.exe, so there is no console window - look for")
         print("the tray icon near the clock.")
         return 0
 
     if SHORTCUT.exists():
         SHORTCUT.unlink()
-        print("Disabled. ClipSync will no longer start at login.")
+        print("Disabled. climp will no longer start at login.")
     else:
         print("Already disabled; nothing to remove.")
     return 0

@@ -30,8 +30,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from clipsync import config as config_module  # noqa: E402
-from clipsync.drive import DriveClient  # noqa: E402
+from climp import config as config_module  # noqa: E402
+from climp.drive import DriveClient  # noqa: E402
 
 PYTHON = str(Path(__file__).resolve().parents[1] / ".venv" / "Scripts" / "python.exe")
 
@@ -66,7 +66,7 @@ def wait_for(db_path: Path, name: str, predicate, timeout: float, label: str):
 def launch(clips_root: Path, log_path: Path) -> subprocess.Popen:
     fh = open(log_path, "ab")
     return subprocess.Popen(
-        [PYTHON, "-m", "clipsync.main", "--clips-root", str(clips_root), "-v"],
+        [PYTHON, "-m", "climp.main", "--clips-root", str(clips_root), "-v"],
         cwd=str(Path(__file__).resolve().parents[1]),
         stdout=fh,
         stderr=subprocess.STDOUT,
@@ -84,13 +84,13 @@ def main() -> int:
 
     cfg = config_module.load()
     db_path = cfg.db_path
-    work = Path(tempfile.mkdtemp(prefix="clipsync-gate-"))
+    work = Path(tempfile.mkdtemp(prefix="climp-gate-"))
     clips_root = work / "Gate Test"
     clips_root.mkdir()
     name = f"Gate Test {time.strftime('%Y.%m.%d - %H.%M.%S')}.DVR.mp4"
     clip = clips_root / name
     # Outside `work`, which the cleanup removes -- the log is the evidence.
-    log_path = Path(tempfile.gettempdir()) / "clipsync-gate.log"
+    log_path = Path(tempfile.gettempdir()) / "climp-gate.log"
     log_path.write_bytes(b"")
 
     print(f"1. Creating a {args.mb} MB test clip")

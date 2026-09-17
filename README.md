@@ -1,10 +1,10 @@
-# ClipSync
+# climp
 
 Watches the folder NVIDIA ShadowPlay saves clips into, waits until each clip is
 genuinely finished writing, and uploads it to a Google Drive folder. Sits in the
 system tray. You record a clip mid-game and it's on your phone a minute later.
 
-![tests](https://github.com/OWNER/ClipSync/actions/workflows/ci.yml/badge.svg)
+![tests](https://github.com/OWNER/climp/actions/workflows/ci.yml/badge.svg)
 
 ---
 
@@ -15,21 +15,21 @@ reading any further.
 
 **It deletes what you delete.** Drive for Desktop mirrors a folder. Clearing out
 your local clips folder to reclaim disk space silently removes the copies in
-Drive too — which is the opposite of what an archive is for. ClipSync is one
+Drive too — which is the opposite of what an archive is for. climp is one
 directional by construction: nothing that happens locally propagates.
 
 **It uploads while you're playing.** A 225 MB clip going up in the background
-adds latency to the game that produced it. ClipSync detects a fullscreen game
+adds latency to the game that produced it. climp detects a fullscreen game
 and holds uploads until you're done.
 
 **Drive has no idea what a finished clip is.** ShadowPlay creates the `.mp4` on
 the hotkey press, then flushes its replay buffer into it. Anything that reacts
-to file creation sees a file that is not there yet. ClipSync requires the size
+to file creation sees a file that is not there yet. climp requires the size
 to hold steady across three consecutive polls *and* an exclusive file handle to
 succeed before it will touch a clip.
 
 **No retention, and no answers.** 15 GB of free Drive is about 60 clips, and a
-full Drive stops Gmail receiving mail. ClipSync keeps a rolling window of the
+full Drive stops Gmail receiving mail. climp keeps a rolling window of the
 newest N clips, and can tell you exactly what it uploaded, what failed, and why.
 
 If none of those bother you, Drive for Desktop is genuinely simpler. They did.
@@ -100,8 +100,8 @@ API, none of which have meaningful equivalents elsewhere.
 ### 2. Install
 
 ```powershell
-git clone <this repo> ClipSync
-cd ClipSync
+git clone <this repo> climp
+cd climp
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
@@ -109,7 +109,7 @@ python -m venv .venv
 Put the downloaded client secret at:
 
 ```
-%LOCALAPPDATA%\ClipSync\client_secret.json
+%LOCALAPPDATA%\climp\client_secret.json
 ```
 
 Outside the repo deliberately, so it cannot be committed by accident.
@@ -117,14 +117,14 @@ Outside the repo deliberately, so it cannot be committed by accident.
 ### 3. First run
 
 ```powershell
-.\.venv\Scripts\python.exe -m clipsync.main
+.\.venv\Scripts\python.exe -m climp.main
 ```
 
 A browser opens once. You will see *"Google hasn't verified this app"* —
-click **Advanced → Go to ClipSync**. That is you authorising your own software.
+click **Advanced → Go to climp**. That is you authorising your own software.
 
 It creates a Drive folder called **Game Clips**, writes
-`%LOCALAPPDATA%\ClipSync\config.toml`, and starts watching. Look for a green
+`%LOCALAPPDATA%\climp\config.toml`, and starts watching. Look for a red
 circle near your clock; Windows 11 hides new tray icons, so check the `^`
 overflow arrow.
 
@@ -144,24 +144,33 @@ Right-click the tray icon.
 
 - **Queue summary** and Drive space left, expressed in clips rather than bytes.
 - **Failed clips**, each with its actual error and its own Retry.
+- **Clips from: …** — which folder is being watched, its full path, and how
+  many `.mp4` files are in it. Choose a different folder and climp rescans it
+  and starts watching it immediately; the choice is saved.
 - **Keep in Drive** — retention. Off, or the newest 10 / 20 / 40 / 60 / 100.
   Choosing a number enables it. Nothing under 24 hours old is ever deleted,
   whatever you pick.
 - **Open Drive folder**, **Open log file**, **Quit**.
 
-The icon is green when idle, blue while working, red when something needs you.
+The icon is a solid red circle. While there is work in the queue it pulses
+smoothly from red to black and back, once every three seconds, and settles on
+solid red when the queue empties.
 
 ### Existing clips are not uploaded
 
-`backfill_since` in `config.toml` is set to the moment you first ran ClipSync.
+`backfill_since` in `config.toml` is set to the moment you first ran climp.
 Anything older is ignored, so a folder with a large back catalogue does not
 empty your Drive quota on first launch. Lower the value to pull older clips in;
 the next startup scan will find them.
 
 ### Config
 
-`%LOCALAPPDATA%\ClipSync\config.toml`. Alongside it live `clips.db`, the
-DPAPI-encrypted `token.bin`, and `logs\clipsync.log`.
+`%LOCALAPPDATA%\climp\config.toml`. Alongside it live `clips.db`, the
+DPAPI-encrypted `token.bin`, and `logs\climp.log`.
+
+The app was called ClipSync until 2026-09-16. An install from before the rename
+has its data moved from `%LOCALAPPDATA%\ClipSync` automatically on first start,
+so the token, database and settings all carry over.
 
 ---
 

@@ -36,4 +36,4 @@ jobs:
         run: python -m pytest tests -q
 
       - name: Check the package imports cleanly
-        run: python -c "import clipsync.main, clipsync.tray, clipsync.retention, clipsync.activity"
+        run: python -c "import climp.main, climp.tray, climp.retention, climp.activity"
