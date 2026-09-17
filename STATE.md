@@ -11,7 +11,7 @@ records every decision with its reasoning; this file is just the bookmark.
 |---|---|
 | 0 — Spike | Complete. Gate met: a hand-picked clip is in Drive. |
 | 1 — Walking skeleton | Complete. Watcher and settle checker, verified against a simulated recording. |
-| 2 — Durability | **Code complete, gate NOT verified.** See below. |
+| 2 — Durability | Complete. Gate met 2026-09-16 after it first failed silently — see below. |
 | 3 — Livable | Not started. Next up. |
 | 4 — Hardening | Not started. |
 | 5 — Polish | Not started. |
@@ -20,23 +20,25 @@ All five blueprint components exist except the tray:
 `watcher.py`, `settle.py`, `reconciler.py`, `uploader.py`, plus `db.py`,
 `drive.py`, `config.py` and `main.py`. 83 tests passing.
 
-## The one open risk
+## What the Phase 2 gate found
 
-**Phase 2's gate has not been run.** The blueprint's exit criterion is: kill the
-app mid-upload, restart, and watch it finish rather than start over.
+The gate passed, but only on the second attempt, and the first attempt is the
+interesting part.
 
-The database half is covered by tests — stranded rows recover with their session
-URI intact. What is untested is the real path: a genuine Drive resumable session
-interrupted and resumed. The Phase 0 spike proved the session URI comes back
-from the client library, so the mechanism is sound, but the full loop has not
-been exercised.
+Killing the app mid-upload and restarting produced a `done` row and a
+byte-exact file in Drive. That looked like a pass. It was not. The "resume" had
+restarted from byte zero and re-sent all 120 MB under the old session — the
+file was right because everything went up twice.
 
-Running it needs a synthetic file of roughly 120 MB uploaded to Drive (enough
-transfer time to kill the process mid-chunk), then deleted afterwards. Net
-storage cost zero. Kip had not yet approved this when the session paused.
+Setting `resumable_uri` on a rebuilt request is not enough: its progress
+counter is zero and the client library never asks the server for the real
+offset. Fixed with `DriveClient.received_bytes()`, which queries it explicitly.
 
-Until that gate passes, treat "survives being closed mid-upload" as designed
-and unit-tested, but not demonstrated.
+Proof after the fix: resumed at byte 58,458,112, which is not a multiple of the
+16 MB chunk size and so could only have come from the server, and the second
+leg took 27.1s against 40.2s for a full re-upload.
+
+`tools/gate_test.py` reruns this end to end and cleans up after itself.
 
 ## Facts established by measurement, not assumption
 
@@ -75,5 +77,3 @@ The four that most shape the code:
 
 Next task is Phase 3: `tray.py`, the quota display, structured logging, launch
 at login, and DPAPI encryption for the token, which currently sits in plaintext.
-
-Before that, decide whether to run the Phase 2 gate.

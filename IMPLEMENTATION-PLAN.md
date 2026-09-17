@@ -559,7 +559,7 @@ Gate met. `spike.py` authenticated, reported quota, created the folder and uploa
 
 | Fact | Value | Why it matters |
 |---|---|---|
-| Resumable session URI is returned by the client library | confirmed, via `request.resumable_uri` after the first chunk | **The single riskiest assumption in the plan.** All of Phase 2's crash recovery rests on persisting this. §2.7's preferred approach is viable; the explicit `Content-Range` fallback is not needed |
+| Resumable session URI is returned by the client library | confirmed, via `request.resumable_uri` after the first chunk | **The single riskiest assumption in the plan.** All of Phase 2's crash recovery rests on persisting this. ⚠ The conclusion drawn here — that the explicit `Content-Range` fallback was unnecessary — **was wrong**, and the Phase 2 gate proved it. See the Phase 2 entry below |
 | Drive folder ID | `1B3-qC7-aXJvh-H7jOrY-UsbP3yCrgnWa` | Goes into `config.toml` in Phase 3 |
 | SQLite | 3.50.4 | ≥ 3.35, so the `RETURNING` form of the atomic claim (§2.3.2) is available — write that one, not the fallback |
 | Python | 3.13.15, venv at `.venv/` | — |
@@ -592,6 +592,25 @@ Decisions in play here: **D2** and **D7** are settled; **D3** and **D6** carry d
 **Gate (the blueprint's own):** start a large upload, kill the process, restart, and watch it *finish* rather than start over. Until that works, Phase 2 is not done.
 
 Decisions in play here: **D1**, **D4**, **D9** and **D11** are settled, so the schema in §2.3 is final as written. **D5**, **D8** and **D10** carry defaults.
+
+### ✅ Phase 2 closed — 2026-09-16
+
+Gate met, but only after it failed the first time in a way that would have gone unnoticed.
+
+**What the first run showed.** Kill the app mid-upload, restart, and the row reached `done` with a byte-exact file in Drive. It looked like a pass. It was not: instrumentation added afterwards showed the "resume" had restarted from byte zero and re-sent the whole 120 MB under the old session. The file was correct because everything was uploaded twice.
+
+**Why.** Setting `request.resumable_uri` is not sufficient. A rebuilt request carries `resumable_progress = 0`, and the client library never asks the server how much it already holds — so it re-sends from the start. Every interruption would have cost a full re-upload, roughly 225 MB per clip, silently.
+
+**The fix** is what the blueprint prescribed and this plan had set aside: `DriveClient.received_bytes()` sends a zero-length `PUT` with `Content-Range: bytes */<total>`, reads the `Range` header, and seeds `resumable_progress` from it. A `200`/`201` means the server already holds the whole file — the crash landed between the last chunk and `mark_done` — so the metadata is used directly and nothing is re-sent. `404`/`410` raises `SessionExpired`, which the worker classifies as `SESSION_GONE`.
+
+**Evidence of the fix.**
+
+| Run | Resumed at | Second-leg duration |
+|---|---|---|
+| Before the fix | byte 16,777,216 — exactly one chunk, counting from zero | 40.2s (full 120 MB) |
+| After the fix | **byte 58,458,112** — not a chunk multiple, so it can only have come from the server | 27.1s (remaining 64 MB) |
+
+**The lesson worth keeping.** The gate as originally specified — "kill it, restart, it finishes" — passes whether the upload resumes or silently restarts. A gate that cannot fail for the reason you care about is not a gate. `tools/gate_test.py` now checks the resumed offset, not just the final state.
 
 ### Phase 3 — make it livable
 

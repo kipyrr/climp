@@ -26,7 +26,7 @@ import httplib2
 from googleapiclient.errors import HttpError
 
 from clipsync.db import Clip, Db
-from clipsync.drive import AuthExpired
+from clipsync.drive import AuthExpired, SessionExpired
 
 log = logging.getLogger(__name__)
 
@@ -58,6 +58,9 @@ def classify(exc: BaseException) -> tuple[ErrorClass, str]:
     """Decide what an exception means. Pure; no I/O, no state."""
     if isinstance(exc, AuthExpired):
         return ErrorClass.AUTH, f"Sign in again: {exc}"
+
+    if isinstance(exc, SessionExpired):
+        return ErrorClass.SESSION_GONE, str(exc)
 
     # Local filesystem problems. D3: the clip was deleted or moved while
     # queued. Retrying a file that no longer exists is an infinite loop.
@@ -160,10 +163,15 @@ class UploadWorker:
     def process(self, clip: Clip) -> UploadOutcome:
         """Upload one claimed row and record what happened. Never raises."""
         try:
-            request = self.client.build_upload(clip.path, self.folder_id, clip.session_uri)
-            response = self._pump(request, clip)
-            if response is None:
-                return UploadOutcome(Result.ABORTED, "shutdown during upload")
+            upload = self.client.build_upload(clip.path, self.folder_id, clip.session_uri)
+            if upload.completed is not None:
+                # The server already had every byte; we died before recording it.
+                log.info("already complete on Drive: %s", clip.path.name)
+                response = upload.completed
+            else:
+                response = self._pump(upload.request, clip)
+                if response is None:
+                    return UploadOutcome(Result.ABORTED, "shutdown during upload")
         except BaseException as exc:  # noqa: BLE001 - classification is the whole point
             return self._record_failure(clip, exc)
 
@@ -181,7 +189,12 @@ class UploadWorker:
         therefore abandons one session -- wasteful, not lossy, and unavoidable
         without reimplementing the upload protocol by hand.
         """
-        saved = clip.session_uri is not None
+        resuming = clip.session_uri
+        saved = resuming is not None
+        if resuming:
+            # Set by build_upload from the server's own byte count, so this is
+            # where the resume really continues from.
+            log.info("resuming %s at byte %d", clip.path.name, getattr(request, "resumable_progress", 0))
         response = None
         while response is None:
             if self.stop.is_set():

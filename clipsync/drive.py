@@ -11,7 +11,9 @@ See IMPLEMENTATION-PLAN.md section 2.8.
 
 from __future__ import annotations
 
+import json
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 
 from google.auth.exceptions import RefreshError
@@ -30,6 +32,29 @@ SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 
 CHUNK_BYTES = 16 * 1024 * 1024  # blueprint says 8-32 MB
 FOLDER_MIME = "application/vnd.google-apps.folder"
+
+
+class SessionExpired(Exception):
+    """The resumable session URI is no longer valid.
+
+    Sessions last about a week, but Google also drops them on its own schedule.
+    The row keeps its file; only the session is lost, so the fix is to clear
+    the URI and start a fresh upload.
+    """
+
+
+@dataclass
+class ResumableUpload:
+    """What build_upload hands back.
+
+    `request` is None when the server already holds the whole file -- which
+    happens if the process died between the final chunk and marking the row
+    done. In that case `completed` carries the metadata and there is nothing
+    left to send.
+    """
+
+    request: object | None
+    completed: dict | None = None
 
 
 class AuthExpired(Exception):
@@ -127,14 +152,18 @@ class DriveClient:
 
     # --- upload -----------------------------------------------------------
 
-    def build_upload(self, path: Path, folder_id: str, session_uri: str | None = None):
-        """Return a resumable request, resuming an existing session if given.
+    def build_upload(self, path: Path, folder_id: str, session_uri: str | None = None) -> ResumableUpload:
+        """Return a resumable request, genuinely continuing an existing session.
 
-        Setting `resumable_uri` on the request makes the client library query
-        Google for the byte count already received and continue from there,
-        rather than starting a new session. Confirmed working in the Phase 0
-        spike -- this is what makes crash recovery cheap instead of a full
-        re-send of 225 MB.
+        Setting `resumable_uri` alone is NOT enough, and this was measured
+        rather than assumed. A fresh request object starts with its progress
+        counter at zero, and the client library never asks the server where it
+        got to, so it re-sends the file from the beginning under the old
+        session. A 120 MB gate test resumed "successfully" while actually
+        uploading every byte twice.
+
+        So we do what the blueprint prescribed: ask Google for the received
+        byte count first, then tell the request to start there.
         """
         media = MediaFileUpload(str(path), chunksize=CHUNK_BYTES, resumable=True, mimetype="video/mp4")
         request = self.service.files().create(
@@ -142,6 +171,38 @@ class DriveClient:
             media_body=media,
             fields="id,name,size,webViewLink",
         )
-        if session_uri:
-            request.resumable_uri = session_uri
-        return request
+        if not session_uri:
+            return ResumableUpload(request=request)
+
+        offset = self.received_bytes(session_uri, media.size())
+        if isinstance(offset, dict):
+            return ResumableUpload(request=None, completed=offset)
+
+        request.resumable_uri = session_uri
+        request.resumable_progress = offset
+        return ResumableUpload(request=request)
+
+    def received_bytes(self, session_uri: str, total: int) -> int | dict:
+        """Ask how much of this session the server already holds.
+
+        A zero-length PUT with `Content-Range: bytes */<total>` is the query
+        form of the resumable protocol. Returns the byte offset to continue
+        from, or the finished file's metadata if the server already has it all.
+        """
+        # _http carries the credentials the service was built with.
+        resp, content = self.service._http.request(
+            session_uri, "PUT", body=b"", headers={"Content-Range": f"bytes */{total}"}
+        )
+
+        if resp.status in (200, 201):
+            return json.loads(content.decode("utf-8"))
+
+        if resp.status == 308:
+            received = resp.get("range")
+            # No Range header means the server has nothing yet.
+            return int(received.split("-")[1]) + 1 if received else 0
+
+        if resp.status in (404, 410):
+            raise SessionExpired(f"Drive no longer recognises the upload session ({resp.status})")
+
+        raise HttpError(resp, content, uri=session_uri)

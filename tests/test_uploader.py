@@ -17,7 +17,7 @@ import pytest
 from googleapiclient.errors import HttpError
 
 from clipsync.db import DONE, FAILED, READY, UPLOADING, Db
-from clipsync.drive import AuthExpired
+from clipsync.drive import AuthExpired, ResumableUpload, SessionExpired
 from clipsync.uploader import (
     ErrorClass,
     Result,
@@ -59,13 +59,19 @@ class FakeRequest:
 
 
 class FakeClient:
-    def __init__(self, request_factory=None):
+    def __init__(self, request_factory=None, already_complete=None, raise_on_build=None):
         self.request_factory = request_factory or (lambda: FakeRequest())
+        self.already_complete = already_complete
+        self.raise_on_build = raise_on_build
         self.built_with: list[tuple[Path, str, str | None]] = []
 
     def build_upload(self, path, folder_id, session_uri=None):
         self.built_with.append((path, folder_id, session_uri))
-        return self.request_factory()
+        if self.raise_on_build is not None:
+            raise self.raise_on_build
+        if self.already_complete is not None:
+            return ResumableUpload(request=None, completed=self.already_complete)
+        return ResumableUpload(request=self.request_factory())
 
 
 class FakeClock:
@@ -329,3 +335,40 @@ def test_shutdown_mid_upload_leaves_the_row_recoverable(db, clock):
 
     assert db.recover_stranded_uploads() == 1
     assert db.get(clip_id).state == READY
+
+
+# --- resume, after the gate test found it silently broken ----------------
+
+
+def test_session_expired_during_the_offset_query_clears_the_uri(db, clock):
+    clip_id = ready_clip(db)
+    db.claim_ready()
+    db.save_session_uri(clip_id, SESSION)
+    db.recover_stranded_uploads()
+    clip = db.claim_ready()[0]
+
+    client = FakeClient(raise_on_build=SessionExpired("Drive no longer recognises the session (410)"))
+    out = worker(db, client, clock).process(clip)
+
+    assert out.result is Result.RETRY
+    row = db.get(clip_id)
+    assert row.session_uri is None
+    assert row.state == READY
+
+
+def test_a_session_the_server_already_completed_is_recorded_not_resent(db, clock):
+    """Crash between the final chunk and mark_done. Re-sending would be waste."""
+    clip_id = ready_clip(db)
+    db.claim_ready()
+    db.save_session_uri(clip_id, SESSION)
+    db.recover_stranded_uploads()
+    clip = db.claim_ready()[0]
+
+    meta = {"id": "already-there", "webViewLink": "https://drive/already-there"}
+    client = FakeClient(already_complete=meta)
+    out = worker(db, client, clock).process(clip)
+
+    assert out.result is Result.DONE
+    row = db.get(clip_id)
+    assert row.state == DONE
+    assert row.drive_file_id == "already-there"
