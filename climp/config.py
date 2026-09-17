@@ -62,7 +62,36 @@ class Config:
 
     @property
     def client_secret_path(self) -> Path:
-        return self.app_dir / "client_secret.json"
+        """Where the Google client secret is.
+
+        Searched in two places rather than one. On Kip's machine the app folder
+        is readable for files the app creates itself, but three files placed
+        there from outside are invisible to the running process while being
+        plainly present to every other tool -- same path, same realpath,
+        different directory listing. That is unexplained, and rather than keep
+        chasing it, the app also looks beside its own source, which it
+        demonstrably can read since it loads its modules from there.
+
+        The app folder still wins when the file is visible there, so a normal
+        install is unaffected.
+        """
+        preferred = self.app_dir / "client_secret.json"
+        if preferred.exists():
+            return preferred
+
+        beside_source = Path(__file__).resolve().parent.parent / "client_secret.json"
+        if beside_source.exists():
+            return beside_source
+
+        return preferred
+
+    @property
+    def client_secret_candidates(self) -> list[Path]:
+        """Everywhere the client secret is looked for, in order."""
+        return [
+            self.app_dir / "client_secret.json",
+            Path(__file__).resolve().parent.parent / "client_secret.json",
+        ]
 
 
 def migrate_legacy_app_dir(new: Path = APP_DIR, old: Path = LEGACY_APP_DIR) -> bool:

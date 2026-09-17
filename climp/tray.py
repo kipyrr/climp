@@ -329,7 +329,8 @@ class Tray:
                 ("real path", _resolved(app_dir)),
                 ("contents", _listing(app_dir)),
                 ("config", "yes" if (app_dir / "config.toml").exists() else "NO"),
-                ("secret", "yes" if cfg.client_secret_path.exists() else "NO"),
+                ("secret", f"{'yes' if cfg.client_secret_path.exists() else 'NO'}"
+                           f" @ {cfg.client_secret_path.parent.name}"),
                 ("token", "yes" if (app_dir / "token.bin").exists() else "NO"),
                 ("retention", "on" if cfg.retention_enabled else "off"),
             ]

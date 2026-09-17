@@ -12,4 +12,4 @@ __version__ = "0.0.1"
 # fresh one -- it proved nothing. This string is compiled into whatever code is
 # actually loaded, so if a running instance reports an old value, it really is
 # running old code.
-BUILD = "2026-09-17 00:15"
+BUILD = "2026-09-17 00:21"
