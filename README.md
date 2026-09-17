@@ -135,6 +135,11 @@ that, a successful start looks exactly like nothing happening.
 Only one copy runs at a time. Launching it again tells you it is already
 running rather than starting a second one.
 
+**If a launch ever appears to do nothing**, check
+`%LOCALAPPDATA%\climp\logs\launch.log`. Every launch writes there before
+anything else happens, so even an instant failure leaves a record, and any
+error is also shown in a dialog.
+
 ### 4. Optional
 
 ```powershell

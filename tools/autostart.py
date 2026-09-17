@@ -23,6 +23,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 PYTHONW = REPO / ".venv" / "Scripts" / "pythonw.exe"  # no console window
+LAUNCHER = REPO / "climp_launcher.pyw"
 STARTUP = Path(os.environ["APPDATA"]) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
 SHORTCUT = STARTUP / "climp.lnk"
 DESKTOP = Path(os.environ["USERPROFILE"]) / "Desktop"
@@ -33,12 +34,15 @@ def create_shortcut(target: Path) -> None:
     """Write a .lnk via WScript.Shell -- the dependency-free way on Windows.
 
     Points at pythonw.exe rather than python.exe, so double-clicking gives you
-    the tray icon and no console window.
+    the tray icon and no console window, and at climp_launcher.pyw rather than
+    `-m climp.main`. The -m form needs the working directory to be the repo;
+    the launcher sets sys.path from its own location, so it works however it is
+    invoked, and it reports failures instead of dying silently.
     """
     script = f"""
 $s = (New-Object -ComObject WScript.Shell).CreateShortcut('{target}')
 $s.TargetPath = '{PYTHONW}'
-$s.Arguments = '-m climp.main'
+$s.Arguments = '"{LAUNCHER}"'
 $s.WorkingDirectory = '{REPO}'
 $s.IconLocation = '{REPO / "climp.ico"},0'
 $s.Description = 'climp - upload game clips to Google Drive'
