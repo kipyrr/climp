@@ -82,6 +82,20 @@ def _frames() -> list[Image.Image]:
     return _FRAMES
 
 
+def _build_marker() -> str:
+    """Timestamp of the newest source file, so the running build is visible.
+
+    A menu that disagrees with the filesystem is only explicable if the
+    instance is running different code, and nothing was reporting which.
+    """
+    try:
+        pkg = Path(__file__).resolve().parent
+        newest = max(f.stat().st_mtime for f in pkg.glob("*.py"))
+        return datetime.datetime.fromtimestamp(newest).strftime("build %H:%M")
+    except Exception:
+        return "build ?"
+
+
 def _wrap(text: str, width: int) -> list[str]:
     """Break a message across menu lines without losing the end of it."""
     import textwrap
@@ -148,6 +162,7 @@ class Tray:
         # Shown in the menu. Several confusing sessions came from looking at
         # an instance started before a fix landed; this makes that visible.
         self.started_at = datetime.datetime.now()
+        self.build = _build_marker()
         self._deferring = False
         self._counts = dict.fromkeys((CANDIDATE, READY, UPLOADING, DONE, FAILED), 0)
         self._quota: dict | None = None
@@ -223,7 +238,7 @@ class Tray:
         def items():
             yield pystray.MenuItem(self._summary(), None, enabled=False)
             yield pystray.MenuItem(
-                f"running since {self.started_at:%H:%M:%S}", None, enabled=False
+                f"running since {self.started_at:%H:%M:%S}  ({self.build})", None, enabled=False
             )
             problem = self._auth_problem()
             if problem:
