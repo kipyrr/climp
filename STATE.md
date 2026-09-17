@@ -1,101 +1,115 @@
 # Where this project is up to
 
-Last updated 2026-09-16, end of the first working session.
+Last updated 2026-09-17, 00:30.
 
 Read this first, then `IMPLEMENTATION-PLAN.md`. The plan is the roadmap and
-records every decision with its reasoning; this file is just the bookmark.
+records every decision with its reasoning; this file is the bookmark.
 
-## Done
+## The app
+
+**climp** — watches `C:\Users\adria\Videos\NVIDIA`, waits until each clip has
+finished writing, uploads it to the Google Drive folder "Game Clips", and sits
+in the system tray. Renamed from ClipSync on 2026-09-16.
+
+All six phases are complete. 186 tests passing.
 
 | Phase | Status |
 |---|---|
-| 0 — Spike | Complete. Gate met: a hand-picked clip is in Drive. |
-| 1 — Walking skeleton | Complete. Watcher and settle checker, verified against a simulated recording. |
-| 2 — Durability | Complete. Gate met 2026-09-16 after it first failed silently — see below. |
-| 3 — Livable | Complete. Tray, logs, encrypted token, opt-in autostart. |
-| 4 — Hardening | Complete. Defer while gaming, retention via the tray, sleep detection. |
-| 5 — Polish | Complete. README, CI, pinned requirements. |
+| 0 — Spike | Complete |
+| 1 — Walking skeleton | Complete |
+| 2 — Durability | Complete. Gate met, after it first passed for the wrong reason |
+| 3 — Livable | Complete. Tray, logs, encrypted token, opt-in autostart |
+| 4 — Hardening | Complete. Defer while gaming, retention, sleep detection |
+| 5 — Polish | Complete. README, CI, pinned requirements |
 
-All five blueprint components now exist: `watcher.py`, `settle.py`,
-`reconciler.py`, `uploader.py` and `tray.py`, plus `db.py`, `drive.py`,
-`config.py`, `logging_setup.py`, `activity.py`, `retention.py` and
-`main.py`. 138 tests passing on CI across Python 3.12 and 3.13.
+## Open, and unexplained
 
-## What the Phase 2 gate found
+**The running app cannot see three files in its own app folder.**
 
-The gate passed, but only on the second attempt, and the first attempt is the
-interesting part.
+`%LOCALAPPDATA%\climp` contains eight entries. A climp process launched by Kip
+lists only five: `clips.db`, `clips.db-shm`, `clips.db-wal`, `config.toml`,
+`logs`. Invisible to it are `client_secret.json`, `token.bin` and
+`spike_state.json` — exactly the three files placed there from outside rather
+than created in place.
 
-Killing the app mid-upload and restarting produced a `done` row and a
-byte-exact file in Drive. That looked like a pass. It was not. The "resume" had
-restarted from byte zero and re-sent all 120 MB under the old session — the
-file was right because everything went up twice.
+Same path. Same `os.path.realpath`. Same user account. Same build constant.
+Identical ACLs after being recreated. Full control for the user. Defender
+reports no ASR rules, no Controlled Folder Access and no blocks. Every launch
+reproduced from a tool session — from the repo, from `C:\Windows\System32`,
+under `python` and `pythonw`, headless and with the tray — sees all eight.
 
-Setting `resumable_uri` on a rebuilt request is not enough: its progress
-counter is zero and the client library never asks the server for the real
-offset. Fixed with `DriveClient.received_bytes()`, which queries it explicitly.
+Ruled out: hidden tray icon, ghost icon, stale bytecode, stale process, wrong
+working directory, permissions, path redirection, and a second app folder (a
+full-disk search found exactly one).
 
-Proof after the fix: resumed at byte 58,458,112, which is not a multiple of the
-16 MB chunk size and so could only have come from the server, and the second
-leg took 27.1s against 40.2s for a full re-upload.
+**The workaround in place:** `Config.client_secret_path` looks in the app
+folder first and then beside the climp package. A copy of `client_secret.json`
+lives at `C:\Users\adria\code\ClipSync\client_secret.json` — gitignored, but
+**do not delete it**; sign-in depends on it on this machine.
 
-`tools/gate_test.py` reruns this end to end and cleans up after itself.
+**Not verified:** after the workaround Kip reported sign-in working, but
+`token.bin` still showed the copy placed there externally, not one written by
+his own process. The sign-in may therefore not survive a restart.
+**First thing to check next session:** open the tray's Diagnostics and see
+whether `token` says yes. If not, give the token the same two-location
+treatment the client secret now has.
 
-## Facts established by measurement, not assumption
+## Changes on the evening of 2026-09-16
+
+- Renamed everything to **climp**, including the app-data folder, which
+  migrates itself from the old `ClipSync` name.
+- Icon is a **solid red circle** that pulses red to black and back on a 3s
+  cosine fade while work can progress. It does not pulse while paused (D25).
+- **Clips folder picker** in the tray (D22). "Source file" was interpreted as
+  the source folder, since the app watches a directory, not a file.
+- **`climp_launcher.pyw`** replaces `-m climp.main` in both shortcuts. The
+  module form resolved the package against the working directory, which
+  Explorer did not supply, producing a silent `ModuleNotFoundError` with no
+  console, no log and no dialog (D24).
+- **Single-instance guard** (D23), with a topmost dialog.
+- **A credential problem no longer stops startup.** The queue runs and only
+  uploading waits, deferring rather than failing so no retry budget is burnt.
+- **Diagnostics submenu** in the tray: build, interpreter, cwd, resolved app
+  folder, its contents, and what the process can actually see. Built because an
+  instance that cannot write its log cannot be diagnosed through its log.
+- **`climp.BUILD`** is a literal constant. An earlier marker computed source
+  mtimes at runtime, which a stale process reports identically to a fresh one,
+  so it could never have detected what it was added to detect.
+
+## Facts established by measurement
 
 | | |
 |---|---|
 | Clips folder | `C:\Users\adria\Videos\NVIDIA`, nested per game |
-| Library at pause | 49 clips, 10.75 GB, average 225 MB |
-| Recording rate | ~24 clips/month |
-| ShadowPlay write speed | 181 MB in about 1 second (buffer dump, not a slow flush) |
-| Raw watchdog events per real clip | 3, debounced to 1 |
-| Drive free | 13.98 GB of 15 GB, ~62 clips of headroom |
-| Drive folder ID | `1B3-qC7-aXJvh-H7jOrY-UsbP3yCrgnWa` |
-| SQLite | 3.50.4, so `RETURNING` is available |
-| Python | 3.13.15, venv at `.venv/` |
+| Library | 56 clips, about 11 GB, average 225 MB |
+| ShadowPlay write speed | 181 MB in roughly one second |
+| Detection to in-Drive | about 95 seconds for a 225 MB clip |
+| Raw watchdog events per clip | 3, debounced to 1 |
+| Drive | 13.2 GB free of 15 GB, 5 clips uploaded |
+| Retention | on, keep newest 40, 24h floor |
+| Resume after a real timeout | resumed at byte 184,549,376 rather than restarting |
 
-## Machine-specific state, deliberately outside this repo
+## Running it
 
-`%LOCALAPPDATA%\climp\` holds `client_secret.json`, `token.json`,
-`config.toml` and `clips.db`. None of it is in git, and none of it should be.
+Double-click **climp launcher.bat** on the Desktop. There is also a
+`climp.lnk`; both run the launcher now. `tools/autostart.py --enable` starts it
+at login.
 
-`config.toml` carries `backfill_since`, pinned to first launch. That is what
-keeps the existing 49 clips local — only clips recorded after that moment are
-eligible. Lower the value to pull older ones in.
+Tray menu: queue summary, build and start time, sign-in state, quota expressed
+in clips, failed clips with per-clip retry, **Clips from**, **Keep in Drive**,
+**Diagnostics**, Open Drive folder, Open log file, Quit.
 
-## Decisions settled so far
+Logs: `%LOCALAPPDATA%\climp\logs\climp.log` and `launch.log`.
 
-D1–D16 are in section 7 of `IMPLEMENTATION-PLAN.md` with the reasoning for each.
-The four that most shape the code:
-
-- **D4** — the retry button resets to `candidate`, not `ready`, keeping the session URI.
-- **D13** — OAuth stays in Testing mode, so the token dies weekly and `drive.py` owns a re-auth path. Reversible in seconds once the repo has a public URL.
-- **D15** — the `backfill_since` gate lives in the settle checker, not the watcher. Forced by a real watcher run: browsing the clips folder in Explorer fires `modified` events for old clips.
-- **D16** — `path_key` is a separate normalised column; `path` keeps its original spelling.
+**After any code change, quit from the tray and relaunch.** A running instance
+keeps the version it loaded at startup; several confusing hours came from
+testing fixes against an instance that predated them.
 
 ## Picking it back up
 
-All six phases are complete. The app works and is in daily use.
-
-**Renamed from ClipSync to climp on 2026-09-16**, along with a red-circle icon
-that pulses while working, and a tray menu entry for choosing which folder
-clips come from. The app-data folder migrates itself from the old name.
-
-Remaining optional work, none of it blocking:
-  * Publish the repo. That gives a public URL, which is what lets OAuth move
-    from Testing to In production and ends the weekly re-sign-in (D13).
-  * Fill in OWNER in the README's CI badge URL once published.
-  * PyInstaller packaging, deliberately skipped -- running from source under a
-    Desktop or Startup shortcut avoids the Defender false-positive entirely.
-
-Retention is off by default and set from the tray menu: right-click the icon,
-open "Keep in Drive", pick a number. Selecting one turns it on; "Keep
-everything" turns it off. Changes apply without a restart.
-
-There is a Desktop shortcut (`climp.lnk`) that starts it with no console.
-`python tools/autostart.py --enable` also starts it at login.
-
-Run it with `.\.venv\Scripts\python.exe -m climp.main` for the tray, or add
-`--no-tray` for a console. `python tools/autostart.py --enable` makes it start
-at login; it is off unless you turn it on.
+1. Check Diagnostics. Does `token` say yes? If not, see the open item above.
+2. Optional: publish the repo, which gives a public URL and lets OAuth move out
+   of Testing mode, ending the weekly re-sign-in (D13).
+3. Optional: fill in `OWNER` in the README's CI badge URL.
+4. D1 to D25 are in section 7 of `IMPLEMENTATION-PLAN.md`, each with the
+   reasoning behind it.
