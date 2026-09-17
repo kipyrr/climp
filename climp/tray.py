@@ -136,6 +136,7 @@ class Tray:
         self._retention = retention
         self._source = source
         self._auth = auth
+        self._menu_state: tuple | None = None
         self._deferring = False
         self._counts = dict.fromkeys((CANDIDATE, READY, UPLOADING, DONE, FAILED), 0)
         self._quota: dict | None = None
@@ -416,21 +417,51 @@ class Tray:
             except Exception:
                 log.debug("quota read failed", exc_info=True)
 
-        # Same condition that used to pick the "busy" colour, so what counts as
-        # working has not changed -- only how it is shown.
-        self._animating = bool(
+        # Animate only while work can actually progress. Clips queued behind a
+        # pause -- a fullscreen game, or a broken sign-in -- are not an
+        # operation running, and pulsing for them both misleads and costs a
+        # tray icon update ten times a second for as long as the pause lasts.
+        work_pending = bool(
             self._counts[UPLOADING] or self._counts[READY] or self._counts[CANDIDATE]
         )
+        self._animating = work_pending and not self._deferring and not self._auth_problem()
         if not self._animating:
             self._show(_icon_image(1.0))
 
         self.current_title = f"climp - {self._summary()}"
-        if self.icon is not None:
-            self.icon.title = self.current_title
-            try:
-                self.icon.update_menu()
-            except Exception:
-                log.debug("menu update failed", exc_info=True)
+        if self.icon is None:
+            return
+
+        self.icon.title = self.current_title
+
+        # Rebuilding the menu is not free: it queries failures, reads retention
+        # settings and counts files in the clips folder. Doing that every few
+        # seconds when nothing has changed made the menu visibly lag.
+        state = self._menu_signature()
+        if state == self._menu_state:
+            return
+        self._menu_state = state
+        try:
+            self.icon.update_menu()
+        except Exception:
+            log.debug("menu update failed", exc_info=True)
+
+    def _menu_signature(self) -> tuple:
+        """Everything the menu renders. Equal signature means equal menu."""
+        retention = None
+        if self._retention is not None:
+            retention = (self._retention.enabled, self._retention.keep_newest)
+        source = None
+        if self._source is not None:
+            source = str(self._source.clips_root)
+        return (
+            tuple(sorted(self._counts.items())),
+            self._quota_text(),
+            self._auth_problem(),
+            retention,
+            source,
+            self._deferring,
+        )
 
     def _show(self, image) -> None:
         self.current_image = image

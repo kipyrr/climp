@@ -167,6 +167,7 @@ class SourceControl:
 
     def __init__(self, app: "Application") -> None:
         self._app = app
+        self._count_cache: tuple[str, float, int] | None = None
 
     @property
     def clips_root(self) -> Path:
@@ -178,11 +179,25 @@ class SourceControl:
         except OSError:
             return False
 
-    def clip_count(self) -> int:
+    def clip_count(self, max_age_seconds: float = 30.0) -> int:
+        """How many clips are in the source folder, cached.
+
+        The tray rebuilds its menu every few seconds, and this walks the whole
+        clips tree. Uncached it re-scanned 56 files every 3 seconds forever,
+        which made the menu visibly lag.
+        """
+        root = str(self.clips_root)
+        now = time.monotonic()
+        if self._count_cache is not None:
+            cached_root, at, value = self._count_cache
+            if cached_root == root and (now - at) < max_age_seconds:
+                return value
         try:
-            return sum(1 for _ in self.clips_root.rglob("*.mp4"))
+            value = sum(1 for _ in self.clips_root.rglob("*.mp4"))
         except OSError:
-            return 0
+            value = 0
+        self._count_cache = (root, now, value)
+        return value
 
     def set_clips_root(self, new_root: Path) -> bool:
         return self._app.change_clips_root(Path(new_root))

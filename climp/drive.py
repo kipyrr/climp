@@ -142,8 +142,17 @@ class DriveClient:
                 "Download it from the Google Cloud console (Clients -> your Desktop app) "
                 "and save it there."
             )
+        log.info("opening a browser for Google sign-in")
         flow = InstalledAppFlow.from_client_secrets_file(str(self.client_secret), SCOPES)
-        creds = flow.run_local_server(port=0)
+        # Empty prompt message: the library otherwise prints the auth URL to
+        # stdout, which under pythonw may not exist. The launcher guarantees a
+        # stream now, but not printing at all is one less thing to depend on.
+        creds = flow.run_local_server(
+            port=0,
+            authorization_prompt_message="",
+            success_message="climp is signed in. You can close this tab.",
+        )
+        log.info("sign-in completed")
         self._save(creds)
         self._service = build("drive", "v3", credentials=creds, cache_discovery=False)
 

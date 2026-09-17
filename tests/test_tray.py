@@ -310,3 +310,52 @@ def test_quit_sets_the_stop_event(db: Db):
     t = Tray(db, stop)
     t._quit()
     assert stop.is_set(), "quit must stop every other loop, not just the icon"
+
+
+# --- the animation must not run when nothing can progress ----------------
+
+
+def test_no_pulse_while_uploads_are_paused(db: Db):
+    """A pulsing icon implies work is happening. Paused work is not happening,
+    and animating regardless cost a tray-icon update 10x a second forever."""
+    t = Tray(db, threading.Event(), deferring_provider=lambda: True)
+    db.insert_candidate(CLIP)
+    t.refresh()
+
+    assert t._counts[CANDIDATE] == 1, "there is queued work"
+    assert t._animating is False, "but it cannot progress, so it must not pulse"
+
+
+def test_no_pulse_while_not_signed_in(db: Db):
+    t = Tray(db, threading.Event())
+    db.insert_candidate(CLIP)
+    t.auth_needed("token expired")
+    t.refresh()
+
+    assert t._animating is False
+
+
+def test_pulse_resumes_once_the_pause_lifts(db: Db):
+    paused = {"now": True}
+    t = Tray(db, threading.Event(), deferring_provider=lambda: paused["now"])
+    db.insert_candidate(CLIP)
+
+    t.refresh()
+    assert t._animating is False
+
+    paused["now"] = False
+    t.refresh()
+    assert t._animating is True
+
+
+def test_the_menu_is_not_rebuilt_when_nothing_changed(db: Db):
+    """Rebuilding queries failures, retention and the clips folder."""
+    t = Tray(db, threading.Event())
+    t.refresh()
+    first = t._menu_signature()
+    t.refresh()
+    assert t._menu_signature() == first
+
+    db.insert_candidate(CLIP)
+    t.refresh()
+    assert t._menu_signature() != first, "a real change must still rebuild it"

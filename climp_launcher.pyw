@@ -31,6 +31,26 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
 
+def _ensure_streams() -> None:
+    """Give pythonw.exe somewhere to print to.
+
+    Launched from Explorer, pythonw has no console and sys.stdout/stderr are
+    None. Any library that prints then raises AttributeError -- which is
+    exactly what killed the Google sign-in flow, since run_local_server prints
+    the authorisation URL before waiting for the redirect. The thread died
+    silently and sign-in simply never happened.
+    """
+    devnull = None
+    for name in ("stdout", "stderr"):
+        if getattr(sys, name, None) is None:
+            if devnull is None:
+                devnull = open(os.devnull, "w", encoding="utf-8")
+            setattr(sys, name, devnull)
+
+
+_ensure_streams()
+
+
 def _log_dir() -> str:
     base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
     path = os.path.join(base, "climp", "logs")
