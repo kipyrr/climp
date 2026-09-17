@@ -28,7 +28,9 @@ STARTUP = Path(os.environ["APPDATA"]) / "Microsoft" / "Windows" / "Start Menu" /
 SHORTCUT = STARTUP / "climp.lnk"
 DESKTOP = Path(os.environ["USERPROFILE"]) / "Desktop"
 DESKTOP_SHORTCUT = DESKTOP / "climp.lnk"
-DESKTOP_BAT = DESKTOP / "Start climp.bat"
+# Not "Start climp.bat": cmd reads a leading "Start" as its own START
+# command and tries to run a file called climp.bat instead.
+DESKTOP_BAT = DESKTOP / "climp launcher.bat"
 
 
 def create_shortcut(target: Path) -> None:
