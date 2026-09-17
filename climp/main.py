@@ -90,7 +90,14 @@ def already_running_notice() -> None:
                 "the icon down onto the taskbar to keep it visible.",
             ]
         )
-        ctypes.windll.user32.MessageBoxW(None, message, "climp", 0x40)  # MB_ICONINFORMATION
+        # ICONINFORMATION | SETFOREGROUND | TOPMOST. Without the last two the
+        # dialog opens behind whatever is in front -- and the person launching
+        # a second copy is very often mid-game, in fullscreen, where an
+        # invisible modal box is indistinguishable from nothing happening.
+        MB_ICONINFORMATION, MB_SETFOREGROUND, MB_TOPMOST = 0x40, 0x10000, 0x40000
+        ctypes.windll.user32.MessageBoxW(
+            None, message, "climp", MB_ICONINFORMATION | MB_SETFOREGROUND | MB_TOPMOST
+        )
     except Exception:
         log.warning("climp is already running")
 
