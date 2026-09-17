@@ -271,12 +271,57 @@ class Tray:
                 yield pystray.MenuItem(self._retention_label(), pystray.Menu(*self._retention_items()))
 
             yield pystray.Menu.SEPARATOR
+            yield pystray.MenuItem("Diagnostics", pystray.Menu(*self._diagnostic_items()))
             yield pystray.MenuItem("Open Drive folder", self._open_drive)
             yield pystray.MenuItem("Open log file", self._open_log)
             yield pystray.Menu.SEPARATOR
             yield pystray.MenuItem("Quit", self._quit)
 
         return pystray.Menu(items)
+
+    def _diagnostic_items(self):
+        """What this process actually sees, reported through the menu.
+
+        The log file is the normal channel for this, but an instance that
+        cannot write its log is exactly the case that needs diagnosing, and
+        then the menu is the only way anything gets out.
+        """
+        import os
+        import sys
+
+        def line(label, value):
+            return pystray.MenuItem(f"{label}: {value}", None, enabled=False)
+
+        try:
+            from climp import BUILD, config as config_module
+
+            cfg = config_module.load()
+            app_dir = cfg.app_dir
+            checks = [
+                ("build", BUILD),
+                ("exe", Path(sys.executable).name),
+                ("cwd", os.getcwd()),
+                ("app dir", str(app_dir)),
+                ("config", "yes" if (app_dir / "config.toml").exists() else "NO"),
+                ("secret", "yes" if cfg.client_secret_path.exists() else "NO"),
+                ("token", "yes" if (app_dir / "token.bin").exists() else "NO"),
+                ("retention", "on" if cfg.retention_enabled else "off"),
+            ]
+
+            # Can this process write its own log directory at all?
+            probe = app_dir / "logs" / "write_probe.tmp"
+            try:
+                probe.parent.mkdir(parents=True, exist_ok=True)
+                probe.write_text("ok", encoding="utf-8")
+                probe.unlink()
+                checks.append(("log writable", "yes"))
+            except Exception as e:
+                checks.append(("log writable", f"NO ({type(e).__name__})"))
+
+            for label, value in checks:
+                yield line(label, value)
+        except Exception as e:
+            yield line("diagnostics failed", f"{type(e).__name__}: {e}")
 
     def _sign_in(self, _icon=None, _item=None) -> None:
         """Opens a browser and blocks, so it cannot run on the menu's thread."""
