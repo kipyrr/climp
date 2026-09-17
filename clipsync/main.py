@@ -10,7 +10,8 @@ Shutdown is deliberately abrupt. Nothing needs flushing, because every state
 change was committed when it happened. A row abandoned at uploading is not a
 loss -- it is exactly what recovery handles on the next start.
 
-The tray is Phase 3. Until then this runs headless and prints a status line.
+The tray owns the main thread (pystray requires it on Windows), so every
+other loop is a daemon thread. --no-tray runs headless for testing.
 
 See IMPLEMENTATION-PLAN.md section 2.10.
 """
@@ -25,14 +26,18 @@ import time
 from pathlib import Path
 
 from clipsync import config as config_module
+from clipsync import logging_setup
 from clipsync.db import Db
 from clipsync.drive import AuthExpired, DriveClient
 from clipsync.reconciler import reconcile
 from clipsync.settle import POLL_SECONDS, DbSettleChecker
 from clipsync.uploader import UploadWorker
+from clipsync.tray import Tray
 from clipsync.watcher import Watcher
 
 log = logging.getLogger("clipsync")
+
+QUOTA_REFRESH_SECONDS = 300
 
 
 def human_gb(n: int | None) -> str:
@@ -47,7 +52,11 @@ class Application:
         self.db = Db(cfg.db_path)
         self.client = DriveClient(cfg.client_secret_path, cfg.token_path)
         self.watcher: Watcher | None = None
+        self.tray: Tray | None = None
+        self.log_path: Path | None = None
         self._threads: list[threading.Thread] = []
+        self._quota_cache: dict | None = None
+        self._quota_checked_at = 0.0
 
     # --- startup ----------------------------------------------------------
 
@@ -114,6 +123,17 @@ class Application:
         if free is not None and free < 1024**3:
             log.warning("less than 1 GB of Drive free - uploads will start failing soon")
 
+    def quota(self) -> dict | None:
+        """Cached, because the tray asks every few seconds and this is an API call."""
+        now = time.monotonic()
+        if self._quota_cache is None or (now - self._quota_checked_at) > QUOTA_REFRESH_SECONDS:
+            try:
+                self._quota_cache = self.client.storage_quota()
+            except Exception:
+                log.debug("quota read failed", exc_info=True)
+            self._quota_checked_at = now
+        return self._quota_cache
+
     # --- loops ------------------------------------------------------------
 
     def _spawn(self, name: str, target) -> None:
@@ -164,14 +184,20 @@ class Application:
         self.db.close()
 
     def _auth_needed(self, detail: str) -> None:
-        # Phase 3 turns this into a tray prompt. For now it is loud in the log.
         log.error("SIGN IN AGAIN: %s", detail)
+        if self.tray is not None:
+            self.tray.auth_needed(detail)
 
     # --- shutdown ---------------------------------------------------------
 
     def shutdown(self) -> None:
         log.info("stopping")
         self.stop.set()
+        if self.tray is not None:
+            try:
+                self.tray.icon.stop()
+            except Exception:
+                log.debug("tray already stopped", exc_info=True)
         if self.watcher:
             self.watcher.stop()
         for t in self._threads:
@@ -190,30 +216,50 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="ClipSync - upload game clips to Drive automatically.")
     ap.add_argument("--clips-root", type=Path, help="Override the configured clips folder.")
     ap.add_argument("--seconds", type=float, help="Run for N seconds then stop. Omit for Ctrl-C.")
+    ap.add_argument("--no-tray", action="store_true", help="Run headless with a console status line.")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
-
-    logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
-        format="%(asctime)s  %(name)-18s %(message)s",
-        datefmt="%H:%M:%S",
-    )
 
     cfg = config_module.load()
     if args.clips_root:
         cfg = config_module.Config(**{**cfg.__dict__, "clips_root": args.clips_root})
 
+    log_path = logging_setup.init(cfg.app_dir, verbose=args.verbose, console=True)
+    log.info("log file: %s", log_path)
+
     app = Application(cfg)
+    app.log_path = log_path
     signal.signal(signal.SIGINT, lambda *_: app.stop.set())
 
     app.start()
-    log.info("running. Ctrl-C to stop.")
+    logging_setup.start_rss_logger(app.stop)
 
+    if args.no_tray or args.seconds is not None:
+        _run_headless(app, args.seconds)
+        return
+
+    app.tray = Tray(
+        app.db,
+        app.stop,
+        log_path=log_path,
+        drive_folder_id=app.folder_id,
+        quota_provider=app.quota,
+    )
+    log.info("running in the tray. Use its Quit item to stop.")
+    try:
+        app.tray.run()  # blocks on the main thread
+    finally:
+        app.shutdown()
+        log.info("final state: %s", app.status_line())
+
+
+def _run_headless(app: "Application", seconds: float | None) -> None:
+    log.info("running headless. Ctrl-C to stop.")
     started = time.monotonic()
     last = ""
     try:
         while not app.stop.is_set():
-            if args.seconds is not None and (time.monotonic() - started) >= args.seconds:
+            if seconds is not None and (time.monotonic() - started) >= seconds:
                 break
             line = app.status_line()
             if line != last:
@@ -222,7 +268,8 @@ def main() -> None:
             app.stop.wait(2)
     finally:
         app.shutdown()
-        print("\nfinal state:", app.status_line())
+        print()
+        print("final state:", app.status_line())
 
 
 if __name__ == "__main__":

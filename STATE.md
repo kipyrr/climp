@@ -12,13 +12,13 @@ records every decision with its reasoning; this file is just the bookmark.
 | 0 — Spike | Complete. Gate met: a hand-picked clip is in Drive. |
 | 1 — Walking skeleton | Complete. Watcher and settle checker, verified against a simulated recording. |
 | 2 — Durability | Complete. Gate met 2026-09-16 after it first failed silently — see below. |
-| 3 — Livable | Not started. Next up. |
-| 4 — Hardening | Not started. |
+| 3 — Livable | Complete. Tray, logs, encrypted token, opt-in autostart. |
+| 4 — Hardening | Not started. Next up. |
 | 5 — Polish | Not started. |
 
-All five blueprint components exist except the tray:
-`watcher.py`, `settle.py`, `reconciler.py`, `uploader.py`, plus `db.py`,
-`drive.py`, `config.py` and `main.py`. 96 tests passing.
+All five blueprint components now exist: `watcher.py`, `settle.py`,
+`reconciler.py`, `uploader.py` and `tray.py`, plus `db.py`, `drive.py`,
+`config.py`, `logging_setup.py` and `main.py`. 108 tests passing.
 
 ## What the Phase 2 gate found
 
@@ -75,5 +75,9 @@ The four that most shape the code:
 
 ## Picking it back up
 
-Next task is Phase 3: `tray.py`, the quota display, structured logging, launch
-at login, and DPAPI encryption for the token, which currently sits in plaintext.
+Next task is Phase 4: defer uploads while a game is running (or cap bandwidth),
+the retention policy, and power-event handling.
+
+Run it with `.\.venv\Scripts\python.exe -m clipsync.main` for the tray, or add
+`--no-tray` for a console. `python tools/autostart.py --enable` makes it start
+at login; it is off unless you turn it on.

@@ -24,6 +24,11 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
 
+try:
+    import win32crypt
+except ImportError:  # non-Windows dev machine
+    win32crypt = None
+
 log = logging.getLogger(__name__)
 
 # Only ever this. drive would be a sensitive scope requiring verification, and
@@ -74,14 +79,41 @@ class DriveClient:
 
     # --- auth -------------------------------------------------------------
 
+    @property
+    def encrypted_token_path(self) -> Path:
+        """DPAPI-encrypted token. Sits beside the plaintext path it replaces."""
+        return self.token_path.with_suffix(".bin")
+
     def _load_credentials(self) -> Credentials | None:
-        if not self.token_path.exists():
-            return None
-        try:
-            return Credentials.from_authorized_user_file(str(self.token_path), SCOPES)
-        except ValueError:
-            log.warning("token file at %s is unreadable; discarding", self.token_path)
-            return None
+        encrypted = self.encrypted_token_path
+        if encrypted.exists():
+            try:
+                blob = encrypted.read_bytes()
+                _desc, plaintext = win32crypt.CryptUnprotectData(blob, None, None, None, 0)
+                return Credentials.from_authorized_user_info(json.loads(plaintext.decode("utf-8")), SCOPES)
+            except Exception:
+                # Encrypted by another user or machine, or corrupt. DPAPI keys
+                # are bound to the Windows account, so this is not recoverable
+                # here -- discard it and sign in again.
+                log.warning("could not decrypt %s; discarding it", encrypted)
+                return None
+
+        # Migration: a plaintext token from before encryption existed.
+        if self.token_path.exists():
+            try:
+                creds = Credentials.from_authorized_user_file(str(self.token_path), SCOPES)
+            except ValueError:
+                log.warning("token file at %s is unreadable; discarding", self.token_path)
+                return None
+            log.info("migrating the plaintext token to DPAPI-encrypted storage")
+            self._save(creds)
+            try:
+                self.token_path.unlink()
+            except OSError:
+                log.warning("could not remove the plaintext token at %s", self.token_path)
+            return creds
+
+        return None
 
     def authorise(self) -> None:
         """Load and refresh silently. Raises AuthExpired if a human is needed."""
@@ -108,8 +140,29 @@ class DriveClient:
         self._service = build("drive", "v3", credentials=creds, cache_discovery=False)
 
     def _save(self, creds: Credentials) -> None:
-        self.token_path.parent.mkdir(parents=True, exist_ok=True)
-        self.token_path.write_text(creds.to_json(), encoding="utf-8")
+        """Encrypt with DPAPI, keyed to this Windows account (roadblock 11).
+
+        A refresh token in plaintext JSON is a standing grant to this Drive
+        folder for anything that can read the file. DPAPI ties it to the logged
+        in user, so copying the file to another machine or account yields
+        nothing usable.
+        """
+        target = self.encrypted_token_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+
+        if win32crypt is None:
+            log.warning("win32crypt unavailable; storing the token unencrypted")
+            self.token_path.write_text(creds.to_json(), encoding="utf-8")
+            return
+
+        blob = win32crypt.CryptProtectData(
+            creds.to_json().encode("utf-8"), "ClipSync OAuth token", None, None, None, 0
+        )
+        # Write then replace, so an interrupted save cannot leave a truncated
+        # token that would force a needless sign-in.
+        tmp = target.with_suffix(".bin.tmp")
+        tmp.write_bytes(blob)
+        tmp.replace(target)
 
     @property
     def service(self):

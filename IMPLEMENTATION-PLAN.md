@@ -618,6 +618,23 @@ Gate met, but only after it failed the first time in a way that would have gone 
 
 Decisions due: **D12** (where db/config/token live on disk).
 
+### ✅ Phase 3 closed — 2026-09-16
+
+The app no longer needs a terminal window.
+
+| Piece | Where | Note |
+|---|---|---|
+| Tray icon | `tray.py` | Colour tracks the queue: green idle, blue working, red needs attention. Counts, quota, failed clips with their error, retry per clip, open Drive, open log, quit |
+| Quota display | `tray.py` + `main.py` | Cached for 5 minutes, because the tray refreshes every 3 seconds and this is an API call. Expressed in **clips remaining**, not just bytes — bytes do not answer "how many more can I record" |
+| Structured logs | `logging_setup.py` | `%LOCALAPPDATA%\ClipSync\logs\clipsync.log`, 2 MB × 5 rotating. The Google client libraries are pinned to WARNING or they bury everything the app says |
+| Hourly RSS line | `logging_setup.py` | Roadblock 12 is only visible over weeks, so the measurement has to start long before anyone suspects a leak. First reading: 60.3 MB, 13 threads |
+| Token encryption | `drive.py` | Roadblock 11. DPAPI via `CryptProtectData`, written to a temp file and renamed so an interrupted save cannot force a needless sign-in |
+| Launch at login | `tools/autostart.py` | A Startup-folder shortcut, not a registry entry: visible in Explorer and removable without a tool. **Opt-in — nothing enables it on its own** |
+
+**On the token migration.** The plaintext `token.json` from Phases 0–2 is upgraded automatically on the next start: it is read once, re-saved encrypted, and deleted. Verified — `token.json` is gone, `token.bin` holds no readable credential. DPAPI keys are bound to the Windows account, so a copy of that file on another machine is useless.
+
+**Deliberately not done here.** Packaging with `--onedir`. The blueprint places it in this phase, but running from source under a Startup shortcut sidesteps roadblock 10 entirely, and PyInstaller only becomes worth the Defender argument if this is ever handed to someone else.
+
 ### Phase 4 — hardening
 
 Defer-while-gaming or a bandwidth cap; the retention policy; power-event handling. All three attach to components that already exist: the first two are conditions on the worker's claim, retention is a Drive-side sweep over `done` rows, power handling is the existing retry path triggered on wake.
