@@ -28,6 +28,7 @@ STARTUP = Path(os.environ["APPDATA"]) / "Microsoft" / "Windows" / "Start Menu" /
 SHORTCUT = STARTUP / "climp.lnk"
 DESKTOP = Path(os.environ["USERPROFILE"]) / "Desktop"
 DESKTOP_SHORTCUT = DESKTOP / "climp.lnk"
+DESKTOP_BAT = DESKTOP / "Start climp.bat"
 
 
 def create_shortcut(target: Path) -> None:
@@ -62,6 +63,8 @@ def main() -> int:
     g.add_argument("--status", action="store_true")
     g.add_argument("--desktop", action="store_true", help="Put a climp icon on the Desktop.")
     g.add_argument("--remove-desktop", action="store_true")
+    g.add_argument("--desktop-bat", action="store_true",
+                   help="Put a .bat launcher on the Desktop. Works where a .lnk sometimes will not.")
     args = ap.parse_args()
 
     if args.status:
@@ -73,6 +76,8 @@ def main() -> int:
             print(f"Desktop icon   : present  -> {DESKTOP_SHORTCUT}")
         else:
             print("Desktop icon   : not present")
+        if DESKTOP_BAT.exists():
+            print(f"Desktop .bat   : present  -> {DESKTOP_BAT}")
         return 0
 
     if args.desktop:
@@ -84,6 +89,22 @@ def main() -> int:
         print()
         print("Double-click it to start climp. No console window appears -")
         print("look for the icon near your clock instead.")
+        return 0
+
+    if args.desktop_bat:
+        # A .bat is launched by cmd.exe rather than resolved by the shell's
+        # link handler, so it sidesteps whatever stops a .lnk from starting.
+        # The cost is a console window that flashes for a fraction of a second.
+        # Joined with plain newlines: write_text already translates them to
+        # CRLF on Windows, and doing it twice produces doubled carriage returns.
+        body = chr(10).join([
+            "@echo off",
+            "rem climp launcher. Starts the tray app, then closes this window.",
+            'start "" "{exe}" "{script}"'.format(exe=PYTHONW, script=LAUNCHER),
+            "",
+        ])
+        DESKTOP_BAT.write_text(body, encoding="utf-8")
+        print(f"Added: {DESKTOP_BAT}")
         return 0
 
     if args.remove_desktop:
