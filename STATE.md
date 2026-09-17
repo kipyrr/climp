@@ -18,7 +18,7 @@ records every decision with its reasoning; this file is just the bookmark.
 
 All five blueprint components exist except the tray:
 `watcher.py`, `settle.py`, `reconciler.py`, `uploader.py`, plus `db.py`,
-`drive.py`, `config.py` and `main.py`. 83 tests passing.
+`drive.py`, `config.py` and `main.py`. 96 tests passing.
 
 ## What the Phase 2 gate found
 
