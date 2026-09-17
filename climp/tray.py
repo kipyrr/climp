@@ -82,6 +82,26 @@ def _frames() -> list[Image.Image]:
     return _FRAMES
 
 
+def _resolved(path) -> str:
+    try:
+        import os
+
+        return os.path.realpath(str(path))
+    except Exception as e:
+        return f"? ({type(e).__name__})"
+
+
+def _listing(path) -> str:
+    """What the process actually sees in its app folder."""
+    try:
+        import os
+
+        names = sorted(os.listdir(str(path)))
+        return f"{len(names)}: " + ", ".join(names)[:90] if names else "EMPTY"
+    except Exception as e:
+        return f"unreadable ({type(e).__name__})"
+
+
 def _build_marker() -> str:
     """The build constant compiled into the loaded code."""
     try:
@@ -302,6 +322,12 @@ class Tray:
                 ("exe", Path(sys.executable).name),
                 ("cwd", os.getcwd()),
                 ("app dir", str(app_dir)),
+                # The physically resolved path. If this differs from the line
+                # above, the process is being shown a different folder than the
+                # one that path names -- redirection, a junction, or a
+                # virtualised view.
+                ("real path", _resolved(app_dir)),
+                ("contents", _listing(app_dir)),
                 ("config", "yes" if (app_dir / "config.toml").exists() else "NO"),
                 ("secret", "yes" if cfg.client_secret_path.exists() else "NO"),
                 ("token", "yes" if (app_dir / "token.bin").exists() else "NO"),
