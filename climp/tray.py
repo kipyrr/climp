@@ -125,6 +125,7 @@ class Tray:
         deferring_provider=None,
         retention=None,
         source=None,
+        auth=None,
     ) -> None:
         self.db = db
         self.stop = stop_event
@@ -134,6 +135,7 @@ class Tray:
         self._deferring_provider = deferring_provider or (lambda: False)
         self._retention = retention
         self._source = source
+        self._auth = auth
         self._deferring = False
         self._counts = dict.fromkeys((CANDIDATE, READY, UPLOADING, DONE, FAILED), 0)
         self._quota: dict | None = None
@@ -150,7 +152,19 @@ class Tray:
 
     # --- what the menu shows ---------------------------------------------
 
+    def _auth_problem(self) -> str | None:
+        if self._auth_message:
+            return self._auth_message
+        if self._auth is not None and getattr(self._auth, "auth_problem", None):
+            return self._auth.auth_problem
+        return None
+
     def _summary(self) -> str:
+        if self._auth_problem():
+            # Takes priority over everything: nothing uploads until it is fixed,
+            # and clips silently piling up looks like the app working.
+            return "Not signed in to Google - clips are waiting"
+
         c = self._counts
         pending = c[CANDIDATE] + c[READY] + c[UPLOADING]
         if c[FAILED]:
@@ -196,8 +210,11 @@ class Tray:
     def _menu(self) -> pystray.Menu:
         def items():
             yield pystray.MenuItem(self._summary(), None, enabled=False)
-            if self._auth_message:
-                yield pystray.MenuItem("!! Sign in again - see the log", None, enabled=False)
+            problem = self._auth_problem()
+            if problem:
+                yield pystray.MenuItem(problem[:70], None, enabled=False)
+                if self._auth is not None:
+                    yield pystray.MenuItem("Sign in to Google...", self._sign_in)
             yield pystray.MenuItem(self._quota_text(), None, enabled=False)
             yield pystray.Menu.SEPARATOR
 
@@ -228,6 +245,21 @@ class Tray:
             yield pystray.MenuItem("Quit", self._quit)
 
         return pystray.Menu(items)
+
+    def _sign_in(self, _icon=None, _item=None) -> None:
+        """Opens a browser and blocks, so it cannot run on the menu's thread."""
+        threading.Thread(target=self._sign_in_blocking, name="sign-in", daemon=True).start()
+
+    def _sign_in_blocking(self) -> None:
+        try:
+            if self._auth.sign_in():
+                self._auth_message = None
+                log.info("signed in; uploads can resume")
+            else:
+                log.warning("sign-in did not complete")
+        except Exception:
+            log.exception("sign-in failed")
+        self.refresh()
 
     # --- clips source folder ----------------------------------------------
 

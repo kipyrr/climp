@@ -201,6 +201,12 @@ class Application:
         self._threads: list[threading.Thread] = []
         self._workers: list[UploadWorker] = []
         self.retention_control = RetentionControl(self.db, cfg.app_dir / "config.toml", cfg)
+        # Drive may be unavailable at startup -- no credentials, expired token,
+        # no network. That must never stop the app running: the tray has to
+        # appear so it can say what is wrong and offer a way to fix it.
+        self.drive_ready = False
+        self.auth_problem: str | None = None
+        self.folder_id: str | None = None
         self.source_control = SourceControl(self)
         self._source_lock = threading.Lock()
         self._quota_cache: dict | None = None
@@ -214,11 +220,10 @@ class Application:
         # 1. Schema first: everything below writes rows.
         self.db.init_schema()
 
-        # 2. Auth before the queue moves, so a broken token is a startup error
-        #    rather than a queue of confusing failures.
-        self._authorise()
-        self._resolve_folder()
-        self._report_quota()
+        # 2. Auth before the queue moves, so a broken token surfaces early --
+        #    but as a reported condition, not a crash. Clips keep being
+        #    detected and queued either way; only uploading waits.
+        self._connect_drive()
 
         # 3. Rows a crash, kill or sleep left mid-upload. Before any worker runs.
         self.db.recover_stranded_uploads()
@@ -274,6 +279,33 @@ class Application:
 
         log.info("clips folder changed: %s -> %s", old_root, new_root)
         return True
+
+    def _connect_drive(self) -> None:
+        """Authorise, find the folder, read the quota. Never raises."""
+        try:
+            self._authorise()
+            self._resolve_folder()
+            self._report_quota()
+            self.drive_ready = True
+            self.auth_problem = None
+        except AuthExpired as e:
+            self.auth_problem = str(e)
+            log.error("Drive unavailable: %s", e)
+            log.error("climp will keep queueing clips; use 'Sign in to Google' in the tray menu")
+        except Exception as e:  # noqa: BLE001 - startup must survive anything here
+            self.auth_problem = f"{type(e).__name__}: {e}"
+            log.exception("Drive unavailable")
+
+    def sign_in(self) -> bool:
+        """Run the interactive flow, then retry everything Drive needs."""
+        try:
+            self.client.reauthorise()
+        except Exception as e:  # noqa: BLE001
+            self.auth_problem = str(e)
+            log.exception("sign-in failed")
+            return False
+        self._connect_drive()
+        return self.drive_ready
 
     def _authorise(self) -> None:
         try:
@@ -350,7 +382,7 @@ class Application:
             stop_event=self.stop,
             max_attempts=self.cfg.max_attempts,
             on_auth_needed=self._auth_needed,
-            should_defer=activity.is_busy if self.cfg.defer_while_gaming else None,
+            should_defer=self._should_defer_uploads,
         )
         self._workers.append(worker)
         try:
@@ -359,6 +391,19 @@ class Application:
             log.exception("upload worker died")
         finally:
             self.db.close()
+
+    def _should_defer_uploads(self) -> bool:
+        """Hold uploads back while gaming (roadblock 4), or while Drive is unusable.
+
+        Deferring rather than failing matters: a clip held back stays queued and
+        uploads the moment sign-in is fixed, whereas failing would burn its
+        retry budget for a reason that has nothing to do with the clip (D13).
+        """
+        if not self.drive_ready:
+            return True
+        if self.cfg.defer_while_gaming:
+            return activity.is_busy()
+        return False
 
     def _sweep_loop(self) -> None:
         """Roadblock 7. A slept machine wakes to dead sockets, not errors.
@@ -427,6 +472,8 @@ class Application:
         self.db.close()
 
     def _auth_needed(self, detail: str) -> None:
+        self.drive_ready = False
+        self.auth_problem = detail
         log.error("SIGN IN AGAIN: %s", detail)
         if self.tray is not None:
             self.tray.auth_needed(detail)
@@ -454,8 +501,11 @@ class Application:
     def status_line(self) -> str:
         c = self.db.counts_by_state()
         if self.deferring:
+            # Name the actual reason. "fullscreen app" while the real problem is
+            # a broken sign-in sends you looking in entirely the wrong place.
+            why = "not signed in" if not self.drive_ready else "fullscreen app"
             return (
-                f"PAUSED (fullscreen app)  candidate {c['candidate']}  ready {c['ready']}  "
+                f"PAUSED ({why})  candidate {c['candidate']}  ready {c['ready']}  "
                 f"done {c['done']}  failed {c['failed']}"
             )
         return (
@@ -504,6 +554,7 @@ def main() -> None:
         deferring_provider=lambda: app.deferring,
         retention=app.retention_control,
         source=app.source_control,
+        auth=app,
     )
     log.info("running in the tray. Use its Quit item to stop.")
     try:

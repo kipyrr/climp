@@ -134,6 +134,14 @@ class DriveClient:
 
     def reauthorise(self) -> None:
         """Run the interactive consent flow. Opens a browser; blocks."""
+        if not self.client_secret.exists():
+            # Otherwise this surfaces as a bare FileNotFoundError naming a path,
+            # which says nothing about what to do next.
+            raise AuthExpired(
+                f"The Google client secret is missing from {self.client_secret}. "
+                "Download it from the Google Cloud console (Clients -> your Desktop app) "
+                "and save it there."
+            )
         flow = InstalledAppFlow.from_client_secrets_file(str(self.client_secret), SCOPES)
         creds = flow.run_local_server(port=0)
         self._save(creds)

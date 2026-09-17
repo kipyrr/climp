@@ -239,9 +239,67 @@ def test_tray_never_writes_anything_but_a_retry(db: Db, tray: Tray):
 def test_auth_message_surfaces_and_flags_attention(db: Db, tray: Tray):
     tray.auth_needed("refresh failed; sign in required")
     assert tray._auth_message
-    assert "Sign in" in "".join(
-        item.text for item in tray._menu() if getattr(item, "text", None)
-    )
+    assert "Not signed in" in tray._summary()
+
+
+def test_not_signed_in_takes_priority_over_the_queue(db: Db, tray: Tray):
+    """Clips piling up with no explanation looks exactly like it working."""
+    db.insert_candidate(CLIP)
+    tray.refresh()
+    assert "in progress" in tray._summary()
+
+    tray.auth_needed("token expired")
+    assert "Not signed in" in tray._summary(), "the real problem must not be buried"
+
+
+class FakeAuth:
+    def __init__(self, problem=None, succeeds=True):
+        self.auth_problem = problem
+        self.succeeds = succeeds
+        self.attempts = 0
+
+    def sign_in(self):
+        self.attempts += 1
+        if self.succeeds:
+            self.auth_problem = None
+        return self.succeeds
+
+
+def test_a_signin_problem_from_the_app_reaches_the_menu(db: Db):
+    auth = FakeAuth(problem="The Google client secret is missing from C:/x/client_secret.json")
+    t = Tray(db, threading.Event(), auth=auth)
+    t.refresh()
+
+    labels = " ".join(i.text for i in t._menu() if getattr(i, "text", None))
+    assert "client secret is missing" in labels, "the actual cause, not a generic message"
+    assert "Sign in to Google" in labels, "and a way to act on it"
+
+
+def test_no_signin_item_when_there_is_nothing_wrong(db: Db):
+    t = Tray(db, threading.Event(), auth=FakeAuth(problem=None))
+    t.refresh()
+    labels = " ".join(i.text for i in t._menu() if getattr(i, "text", None))
+    assert "Sign in to Google" not in labels
+
+
+def test_signing_in_from_the_menu_clears_the_problem(db: Db):
+    auth = FakeAuth(problem="token expired", succeeds=True)
+    t = Tray(db, threading.Event(), auth=auth)
+    t.auth_needed("token expired")
+
+    t._sign_in_blocking()
+
+    assert auth.attempts == 1
+    assert t._auth_problem() is None
+
+
+def test_a_failed_signin_leaves_the_problem_visible(db: Db):
+    auth = FakeAuth(problem="token expired", succeeds=False)
+    t = Tray(db, threading.Event(), auth=auth)
+
+    t._sign_in_blocking()  # must not raise
+
+    assert t._auth_problem() == "token expired"
 
 
 # --- quit -----------------------------------------------------------------
