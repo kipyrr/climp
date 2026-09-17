@@ -14,12 +14,12 @@ records every decision with its reasoning; this file is just the bookmark.
 | 2 — Durability | Complete. Gate met 2026-09-16 after it first failed silently — see below. |
 | 3 — Livable | Complete. Tray, logs, encrypted token, opt-in autostart. |
 | 4 — Hardening | Complete. Defer while gaming, retention via the tray, sleep detection. |
-| 5 — Polish | Not started. Next up: README, CI. |
+| 5 — Polish | Complete. README, CI, pinned requirements. |
 
 All five blueprint components now exist: `watcher.py`, `settle.py`,
 `reconciler.py`, `uploader.py` and `tray.py`, plus `db.py`, `drive.py`,
 `config.py`, `logging_setup.py`, `activity.py`, `retention.py` and
-`main.py`. 138 tests passing.
+`main.py`. 138 tests passing on CI across Python 3.12 and 3.13.
 
 ## What the Phase 2 gate found
 
@@ -76,7 +76,14 @@ The four that most shape the code:
 
 ## Picking it back up
 
-Next task is Phase 5: README with the architecture diagram, and CI.
+All six phases are complete. The app works and is in daily use.
+
+Remaining optional work, none of it blocking:
+  * Publish the repo. That gives a public URL, which is what lets OAuth move
+    from Testing to In production and ends the weekly re-sign-in (D13).
+  * Fill in OWNER in the README's CI badge URL once published.
+  * PyInstaller packaging, deliberately skipped -- running from source under a
+    Desktop or Startup shortcut avoids the Defender false-positive entirely.
 
 Retention is off by default and set from the tray menu: right-click the icon,
 open "Keep in Drive", pick a number. Selecting one turns it on; "Keep

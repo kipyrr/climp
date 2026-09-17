@@ -1,0 +1,39 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    # Windows only, and not for convenience: the settle checker's exclusive-open
+    # test goes through CreateFile with share mode 0, the token is encrypted
+    # with DPAPI, and the "are you gaming" check is a Windows shell API. None of
+    # it has a meaningful Linux equivalent to test against.
+    runs-on: windows-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run tests
+        run: python -m pytest tests -q
+
+      - name: Check the package imports cleanly
+        run: python -c "import clipsync.main, clipsync.tray, clipsync.retention, clipsync.activity"

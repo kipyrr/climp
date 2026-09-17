@@ -1,0 +1,7 @@
+# Normalise line endings. Without this, every commit from Windows warns about
+# LF being replaced by CRLF and diffs pick up noise that is not a real change.
+* text=auto eol=lf
+
+*.ico binary
+*.png binary
+*.mp4 binary
