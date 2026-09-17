@@ -48,6 +48,57 @@ def human_gb(n: int | None) -> str:
     return "unknown" if n is None else f"{n / 1024**3:.2f} GB"
 
 
+class RetentionControl:
+    """What the tray is allowed to change about retention.
+
+    Settings live in config.toml, not in memory, so a change survives a
+    restart -- and the sweep loop re-reads them each cycle, so a change takes
+    effect without one. The tray never calls the sweep itself; it sets an
+    event and the loop does the work, keeping deletion in one place.
+    """
+
+    def __init__(self, db: Db, config_path: Path, cfg: config_module.Config) -> None:
+        self.db = db
+        self.config_path = config_path
+        self._cfg = cfg
+        self.trigger = threading.Event()
+
+    def reload(self) -> config_module.Config:
+        try:
+            self._cfg = config_module.load(self.config_path)
+        except Exception:
+            log.exception("could not re-read config; keeping the previous settings")
+        return self._cfg
+
+    @property
+    def enabled(self) -> bool:
+        return self._cfg.retention_enabled
+
+    @property
+    def keep_newest(self) -> int:
+        return self._cfg.retention_keep_newest
+
+    @property
+    def min_age_hours(self) -> float:
+        return self._cfg.retention_min_age_hours
+
+    def in_drive_count(self) -> int:
+        try:
+            return self.db.in_drive_count()
+        except Exception:
+            log.debug("in_drive_count failed", exc_info=True)
+            return 0
+
+    def set_keep(self, n: int) -> None:
+        self._cfg = config_module.update(self.config_path, retention_enabled=True, retention_keep_newest=n)
+
+    def set_enabled(self, enabled: bool) -> None:
+        self._cfg = config_module.update(self.config_path, retention_enabled=enabled)
+
+    def run_now(self) -> None:
+        self.trigger.set()
+
+
 class Application:
     def __init__(self, cfg: config_module.Config, allow_interactive_auth: bool = True) -> None:
         self.cfg = cfg
@@ -60,6 +111,7 @@ class Application:
         self.log_path: Path | None = None
         self._threads: list[threading.Thread] = []
         self._workers: list[UploadWorker] = []
+        self.retention_control = RetentionControl(self.db, cfg.app_dir / "config.toml", cfg)
         self._quota_cache: dict | None = None
         self._quota_checked_at = 0.0
 
@@ -92,14 +144,14 @@ class Application:
         for i in range(self.cfg.concurrency):
             self._spawn(f"upload-{i}", self._upload_loop)
         self._spawn("sweeper", self._sweep_loop)
+        self._spawn("retention", self._retention_loop)
         if self.cfg.retention_enabled:
             log.info(
                 "retention on: keeping the newest %d clips, nothing younger than %.0fh",
                 self.cfg.retention_keep_newest, self.cfg.retention_min_age_hours,
             )
-            self._spawn("retention", self._retention_loop)
         else:
-            log.info("retention off (set retention_enabled in config.toml to turn it on)")
+            log.info("retention off - change it from the tray menu at any time")
 
     def _authorise(self) -> None:
         try:
@@ -214,21 +266,42 @@ class Application:
         self.db.close()
 
     def _retention_loop(self) -> None:
-        """Roadblock 2. Only runs if it was turned on."""
-        interval = self.cfg.retention_interval_hours * 3600
+        """Roadblock 2. Always running; it asks the config whether to act.
+
+        Re-reading each cycle is what lets the tray turn retention on or change
+        the keep count without a restart. Reading a small TOML every thirty
+        seconds costs nothing next to what it controls.
+        """
+        control = self.retention_control
+        last_run = time.monotonic()
+
         while not self.stop.is_set():
-            self.stop.wait(interval)
+            asked = control.trigger.wait(timeout=30)
             if self.stop.is_set():
                 break
+            control.trigger.clear()
+
+            cfg = control.reload()
+            due = (time.monotonic() - last_run) >= cfg.retention_interval_hours * 3600
+            if not (asked or due):
+                continue
+            last_run = time.monotonic()
+
+            if not cfg.retention_enabled:
+                if asked:
+                    log.info("retention is off; nothing to do")
+                continue
+
             try:
                 retention.sweep(
                     self.db,
                     self.client,
-                    keep_newest=self.cfg.retention_keep_newest,
-                    min_age_hours=self.cfg.retention_min_age_hours,
+                    keep_newest=cfg.retention_keep_newest,
+                    min_age_hours=cfg.retention_min_age_hours,
                 )
             except Exception:
                 log.exception("retention sweep failed")
+
         self.db.close()
 
     def _auth_needed(self, detail: str) -> None:
@@ -302,6 +375,7 @@ def main() -> None:
         drive_folder_id=app.folder_id,
         quota_provider=app.quota,
         deferring_provider=lambda: app.deferring,
+        retention=app.retention_control,
     )
     log.info("running in the tray. Use its Quit item to stop.")
     try:

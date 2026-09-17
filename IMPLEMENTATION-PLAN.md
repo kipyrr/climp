@@ -659,7 +659,11 @@ A retired row stays at `done` with a new `retired_at` timestamp (**D17**). Delet
 
 **Power events (roadblock 7).** The blueprint offered a choice between subscribing to power broadcasts and simply retrying from the queue. Neither was quite enough alone, so the sweeper now **detects** sleep instead of waiting it out: `time.monotonic()` is frozen while Windows is suspended but `time.time()` is not, so a gap between the two means the machine slept. That turns a ten-minute staleness timeout into an immediate requeue on wake, with no message window and no new dependency.
 
-**Still open: the retention policy itself.** The mechanism is built and tested; what "newest" should mean for Kip is **D18**, and retention stays off until it is answered.
+**The retention policy moved into the UI (D18/D19).** Rather than settling a number in config, the keep count is a tray menu choice: off, or the newest 10 / 20 / 40 / 60 / 100, each labelled with the GB it implies. Selecting a number is the whole gesture — there is no separate enable step to forget.
+
+That makes the tray write something beyond the retry reset the blueprint allowed. It writes **config**, never state: no clip changes state because of a menu click, and deletion still happens only in the retention loop, which the menu signals rather than calls. The invariant the blueprint actually cares about — the tray never moves a clip — holds exactly.
+
+The sweep loop re-reads config every thirty seconds, so a change takes effect without a restart, and lives in a file, so it survives one.
 
 ### Phase 5 — polish
 

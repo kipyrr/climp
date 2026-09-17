@@ -13,13 +13,13 @@ records every decision with its reasoning; this file is just the bookmark.
 | 1 — Walking skeleton | Complete. Watcher and settle checker, verified against a simulated recording. |
 | 2 — Durability | Complete. Gate met 2026-09-16 after it first failed silently — see below. |
 | 3 — Livable | Complete. Tray, logs, encrypted token, opt-in autostart. |
-| 4 — Hardening | Complete. Defer while gaming, retention (off), sleep detection. |
+| 4 — Hardening | Complete. Defer while gaming, retention via the tray, sleep detection. |
 | 5 — Polish | Not started. Next up: README, CI. |
 
 All five blueprint components now exist: `watcher.py`, `settle.py`,
 `reconciler.py`, `uploader.py` and `tray.py`, plus `db.py`, `drive.py`,
 `config.py`, `logging_setup.py`, `activity.py`, `retention.py` and
-`main.py`. 122 tests passing.
+`main.py`. 138 tests passing.
 
 ## What the Phase 2 gate found
 
@@ -78,10 +78,12 @@ The four that most shape the code:
 
 Next task is Phase 5: README with the architecture diagram, and CI.
 
-One decision is still open: **D18**, the retention policy. The mechanism is
-built and tested but retention is OFF, because how many clips to keep in Drive
-is Kip's call. Preview any policy without deleting:
-`python tools/retention_cli.py --keep 40`
+Retention is off by default and set from the tray menu: right-click the icon,
+open "Keep in Drive", pick a number. Selecting one turns it on; "Keep
+everything" turns it off. Changes apply without a restart.
+
+There is a Desktop shortcut (`ClipSync.lnk`) that starts it with no console.
+`python tools/autostart.py --enable` also starts it at login.
 
 Run it with `.\.venv\Scripts\python.exe -m clipsync.main` for the tray, or add
 `--no-tray` for a console. `python tools/autostart.py --enable` makes it start

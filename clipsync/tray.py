@@ -8,6 +8,10 @@ between components.
 pystray wants the main thread on Windows, so main.py runs this last and blocks
 on it while every other loop runs as a daemon thread.
 
+It does write one more thing than the blueprint allowed: retention settings
+(D19). That is a config write, not a state write -- the rule that the tray
+never moves a clip between states still holds exactly.
+
 See IMPLEMENTATION-PLAN.md section 2.9.
 """
 
@@ -28,6 +32,10 @@ from clipsync.db import CANDIDATE, DONE, FAILED, READY, UPLOADING, Db
 log = logging.getLogger(__name__)
 
 REFRESH_SECONDS = 3.0
+
+# Offered in the menu. "Off" plus a handful of round numbers -- a spinner in a
+# tray menu is miserable, and these cover the useful range at ~225 MB a clip.
+KEEP_CHOICES = (10, 20, 40, 60, 100)
 
 IDLE = (0x4C, 0xAF, 0x50)      # green
 BUSY = (0x21, 0x96, 0xF3)      # blue
@@ -56,6 +64,7 @@ class Tray:
         drive_folder_id: str | None = None,
         quota_provider=None,
         deferring_provider=None,
+        retention=None,
     ) -> None:
         self.db = db
         self.stop = stop_event
@@ -63,6 +72,7 @@ class Tray:
         self.drive_folder_id = drive_folder_id
         self._quota_provider = quota_provider
         self._deferring_provider = deferring_provider or (lambda: False)
+        self._retention = retention
         self._deferring = False
         self._counts = dict.fromkeys((CANDIDATE, READY, UPLOADING, DONE, FAILED), 0)
         self._quota: dict | None = None
@@ -133,6 +143,10 @@ class Tray:
                 yield pystray.Menu.SEPARATOR
                 yield pystray.MenuItem("Failed clips", pystray.Menu(*failures))
 
+            if self._retention is not None:
+                yield pystray.Menu.SEPARATOR
+                yield pystray.MenuItem(self._retention_label(), pystray.Menu(*self._retention_items()))
+
             yield pystray.Menu.SEPARATOR
             yield pystray.MenuItem("Open Drive folder", self._open_drive)
             yield pystray.MenuItem("Open log file", self._open_log)
@@ -140,6 +154,65 @@ class Tray:
             yield pystray.MenuItem("Quit", self._quit)
 
         return pystray.Menu(items)
+
+    # --- retention (D18/D19) ----------------------------------------------
+
+    def _retention_label(self) -> str:
+        r = self._retention
+        if not r.enabled:
+            return "Keep in Drive: everything"
+        return f"Keep in Drive: newest {r.keep_newest}"
+
+    def _retention_items(self):
+        r = self._retention
+        in_drive = r.in_drive_count()
+
+        yield pystray.MenuItem(f"{in_drive} clips in Drive now", None, enabled=False)
+        yield pystray.Menu.SEPARATOR
+
+        yield pystray.MenuItem(
+            "Keep everything (no deleting)",
+            self._set_keep(None),
+            checked=lambda _item: not self._retention.enabled,
+            radio=True,
+        )
+        for n in KEEP_CHOICES:
+            gb = n * 225 / 1024
+            yield pystray.MenuItem(
+                f"Keep newest {n}  (~{gb:.1f} GB)",
+                self._set_keep(n),
+                checked=self._is_keep(n),
+                radio=True,
+            )
+
+        yield pystray.Menu.SEPARATOR
+        yield pystray.MenuItem(
+            f"Never delete anything under {r.min_age_hours:.0f}h old", None, enabled=False
+        )
+        if r.enabled:
+            yield pystray.MenuItem("Tidy up now", self._run_retention)
+
+    def _is_keep(self, n: int):
+        def checked(_item) -> bool:
+            return self._retention.enabled and self._retention.keep_newest == n
+
+        return checked
+
+    def _set_keep(self, n: int | None):
+        def action(_icon=None, _item=None):
+            if n is None:
+                self._retention.set_enabled(False)
+                log.info("retention turned off from the tray")
+            else:
+                self._retention.set_keep(n)
+                log.info("retention set to keep the newest %d clips", n)
+            self.refresh()
+
+        return action
+
+    def _run_retention(self, _icon=None, _item=None) -> None:
+        self._retention.run_now()
+        log.info("retention sweep requested from the tray")
 
     # --- actions ----------------------------------------------------------
 

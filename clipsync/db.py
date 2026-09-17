@@ -346,6 +346,13 @@ class Db:
             (self._clock(), self._clock(), clip_id),
         )
 
+    def in_drive_count(self) -> int:
+        """Uploaded clips whose Drive copy still exists."""
+        return self.conn.execute(
+            "SELECT COUNT(*) n FROM clips WHERE state=? AND drive_file_id IS NOT NULL AND retired_at IS NULL",
+            (DONE,),
+        ).fetchone()["n"]
+
     def retired_count(self) -> int:
         return self.conn.execute(
             "SELECT COUNT(*) n FROM clips WHERE retired_at IS NOT NULL"
