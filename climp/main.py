@@ -556,8 +556,7 @@ def main() -> None:
     # source than the one being edited, and nothing reported that.
     import climp
     pkg = Path(climp.__file__).resolve().parent
-    newest = max((f.stat().st_mtime for f in pkg.glob("*.py")), default=0)
-    log.info("code     : %s (newest file %s)", pkg, time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(newest)))
+    log.info("code     : %s (build %s)", pkg, climp.BUILD)
     log.info("app dir  : %s", cfg.app_dir)
     log.info("config   : %s (exists: %s)", cfg.app_dir / "config.toml", (cfg.app_dir / "config.toml").exists())
     log.info("secret   : %s (exists: %s)", cfg.client_secret_path, cfg.client_secret_path.exists())

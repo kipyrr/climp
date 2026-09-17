@@ -83,15 +83,11 @@ def _frames() -> list[Image.Image]:
 
 
 def _build_marker() -> str:
-    """Timestamp of the newest source file, so the running build is visible.
-
-    A menu that disagrees with the filesystem is only explicable if the
-    instance is running different code, and nothing was reporting which.
-    """
+    """The build constant compiled into the loaded code."""
     try:
-        pkg = Path(__file__).resolve().parent
-        newest = max(f.stat().st_mtime for f in pkg.glob("*.py"))
-        return datetime.datetime.fromtimestamp(newest).strftime("build %H:%M")
+        from climp import BUILD
+
+        return f"build {BUILD[-5:]}"
     except Exception:
         return "build ?"
 
