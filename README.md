@@ -4,7 +4,7 @@ Watches the folder NVIDIA ShadowPlay saves clips into, waits until each clip is
 genuinely finished writing, and uploads it to a Google Drive folder. Sits in the
 system tray. You record a clip mid-game and it's on your phone a minute later.
 
-![tests](https://github.com/OWNER/climp/actions/workflows/ci.yml/badge.svg)
+![tests](https://github.com/kipyrr/climp/actions/workflows/ci.yml/badge.svg)
 
 ---
 
@@ -100,7 +100,7 @@ API, none of which have meaningful equivalents elsewhere.
 ### 2. Install
 
 ```powershell
-git clone <this repo> climp
+git clone https://github.com/kipyrr/climp.git climp
 cd climp
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
