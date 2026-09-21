@@ -1,6 +1,6 @@
 # Where this project is up to
 
-Last updated 2026-09-17, 00:30.
+Last updated 2026-09-21, 13:30.
 
 Read this first, then `IMPLEMENTATION-PLAN.md`. The plan is the roadmap and
 records every decision with its reasoning; this file is the bookmark.
@@ -105,11 +105,30 @@ Logs: `%LOCALAPPDATA%\climp\logs\climp.log` and `launch.log`.
 keeps the version it loaded at startup; several confusing hours came from
 testing fixes against an instance that predated them.
 
+## Published, 2026-09-21
+
+The repo is public at **https://github.com/kipyrr/climp**, all 30 commits on
+`main`. CI ran green on the first push (Windows, Python 3.12 and 3.13).
+
+Checked before publishing: the git index carried 43 files and none of them were
+secrets, and `git log --all --name-only` across the whole history matched no
+`client_secret`, `token`, `*.bin`, `config.toml` or `*.db`. The repo-root copy
+of `client_secret.json` is untracked and stayed local. **Do not delete it** --
+see the open item above.
+
+The README's CI badge and clone URL now point at `kipyrr/climp` rather than the
+`OWNER` placeholder.
+
 ## Picking it back up
 
 1. Check Diagnostics. Does `token` say yes? If not, see the open item above.
-2. Optional: publish the repo, which gives a public URL and lets OAuth move out
-   of Testing mode, ending the weekly re-sign-in (D13).
-3. Optional: fill in `OWNER` in the README's CI badge URL.
-4. D1 to D25 are in section 7 of `IMPLEMENTATION-PLAN.md`, each with the
+2. Set up the second computer. See `docs/second-computer.md`.
+3. Now that the repo is public, move the Google OAuth consent screen from
+   *Testing* to *In production* (D13). It asks for a homepage and a privacy
+   policy URL; the repo URL serves as the homepage. This ends the weekly
+   re-sign-in, and `drive.file` alone triggers no verification review.
+4. Retention is per-instance -- it only deletes rows in its own queue, so two
+   machines can never delete each other's clips. But two instances both keeping
+   the newest 40 means up to 80 clips in a 15 GB Drive. Drop one to 20.
+5. D1 to D25 are in section 7 of `IMPLEMENTATION-PLAN.md`, each with the
    reasoning behind it.
