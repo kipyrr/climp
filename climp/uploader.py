@@ -30,6 +30,28 @@ from climp.drive import AuthExpired, SessionExpired
 
 log = logging.getLogger(__name__)
 
+import os
+from pathlib import Path
+
+EDIT_DIR = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "climp" / "edited"
+
+
+def prepare_clip(src: Path) -> Path:
+    """Make the TikTok-ready edit; fall back to the raw clip if anything fails."""
+    out = EDIT_DIR / (src.stem + "_tiktok.mp4")
+    if out.exists() and out.stat().st_size > 0:
+        return out  # already edited (e.g. on a retry)
+    try:
+        from tt_edit import make_tiktok
+        try:
+            return make_tiktok(src, out, use_nvenc=True)
+        except Exception:
+            log.warning("NVENC edit failed for %s; trying CPU", src.name, exc_info=True)
+            return make_tiktok(src, out, use_nvenc=False)
+    except Exception:
+        log.warning("edit failed for %s; uploading raw clip", src.name, exc_info=True)
+        return src
+
 MAX_ATTEMPTS = 6          # D8
 BACKOFF_CAP_SECONDS = 64  # blueprint: truncated exponential, capped around 64
 IDLE_SLEEP_SECONDS = 2.0
@@ -191,7 +213,7 @@ class UploadWorker:
     def process(self, clip: Clip) -> UploadOutcome:
         """Upload one claimed row and record what happened. Never raises."""
         try:
-            upload = self.client.build_upload(clip.path, self.folder_id, clip.session_uri)
+            upload = self.client.build_upload(prepare_clip(clip.path), self.folder_id, clip.session_uri)
             if upload.completed is not None:
                 # The server already had every byte; we died before recording it.
                 log.info("already complete on Drive: %s", clip.path.name)
